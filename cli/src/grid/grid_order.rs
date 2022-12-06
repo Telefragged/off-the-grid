@@ -17,7 +17,7 @@ use thiserror::Error;
 const MIN_BOX_VALUE: u64 = 1000000;
 pub const MAX_FEE: u64 = 2000000;
 
-const GRID_ORDER_BASE16_BYTES: &str = "100a040004000500040204000400040005000e691005040004000e36100204a00b08cd0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ea02d192a39a8cc7a701730073011001020402d19683030193a38cc7b2a57300000193c2b2a57301007473027303830108cdeeac93b1a57304058092f401d808d601e4c6a70408d602b2a5dc0c1aa402a7730000d603e4c6a70559d604e4c6a7064d0ed60593b1db6308a77301d6068c720402d6079572058c7203018c720302d60895720599c1a7c1720299c17202c1a7eb027201d1ededededededed93c27202c2a793e4c672020408720193e4c672020559720393e4c67202064d0e72049572059072089c720672079272089c720672079172087302957205d801d609db63087202eded93b172097303938cb27209730400018c720401938cb2720973050002720693b1db63087202730693b0a57307d901094163d802d60b8c720902d60c8c7209019593c2720b73089a720cc1720b720c7309";
+const GRID_ORDER_BASE16_BYTES: &str = "100a040001010500040204000400040005000e691005040004000e36100204a00b08cd0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ea02d192a39a8cc7a701730073011001020402d19683030193a38cc7b2a57300000193c2b2a57301007473027303830108cdeeac93b1a57304058092f401d809d601e4c6a70408d602b2a5db6508fe00d603e4c6a70559d604e4c6a7064d0ed605c6a7070ed60693b1db6308a77300d6078c720402d6089572068c7203018c720302d60995720699c1a7c1720299c17202c1a7eb027201d1edededededededed93c27202c2a793e4c672020408720193e4c672020559720393e4c67202064d0e720495e6720593e4c67202070ee4720573019572069072099c720772089272099c720772089172097302957206d801d60adb63087202eded93b1720a7303938cb2720a730400018c720401938cb2720a73050002720793b1db63087202730693b0a57307d9010a4163d802d60c8c720a02d60d8c720a019593c2720c73089a720dc1720c720d7309";
 lazy_static! {
     /// Grid order P2S address
     pub static ref GRID_ORDER_ADDRESS: Address =
@@ -74,6 +74,7 @@ pub struct GridOrder {
     ask: i64,
     token: Token,
     state: OrderState,
+    metadata: Option<Vec<u8>>,
     pub value: BoxValue,
 }
 
@@ -84,6 +85,7 @@ impl GridOrder {
         ask: i64,
         token: Token,
         state: OrderState,
+        metadata: Option<Vec<u8>>,
     ) -> Result<Self, GridOrderError> {
         let order_amount = *token.amount.as_u64() as i64;
         let value = match state {
@@ -99,6 +101,7 @@ impl GridOrder {
             token,
             state,
             value,
+            metadata,
         };
 
         Ok(order)
@@ -142,11 +145,15 @@ impl GridOrder {
             *self.token.amount.as_u64() as i64,
         );
 
-        let registers: HashMap<NonMandatoryRegisterId, Constant> = HashMap::from([
+        let mut registers: HashMap<NonMandatoryRegisterId, Constant> = HashMap::from([
             (NonMandatoryRegisterId::R4, self.owner_dlog.clone().into()),
             (NonMandatoryRegisterId::R5, (self.bid, self.ask).into()),
             (NonMandatoryRegisterId::R6, token_pair.into()),
         ]);
+
+        if let Some(metadata) = &self.metadata {
+            registers.insert(NonMandatoryRegisterId::R7, metadata.clone().into());
+        }
 
         let tokens = match self.state {
             OrderState::Buy => None,
@@ -196,6 +203,8 @@ impl TryFrom<&ErgoBox> for GridOrder {
         let (bid, ask): (i64, i64) = get_register_extract(ergo_box, NonMandatoryRegisterId::R5)?;
         let (token_id, order_amount): (TokenId, i64) =
             get_register_extract(ergo_box, NonMandatoryRegisterId::R6)?;
+        let metadata: Option<Vec<u8>> =
+            get_register_extract(ergo_box, NonMandatoryRegisterId::R7).ok();
 
         let state: OrderState = if ergo_box.tokens.is_none() {
             OrderState::Buy
@@ -211,6 +220,7 @@ impl TryFrom<&ErgoBox> for GridOrder {
             ask,
             token: (token_id.clone(), order_token_amount).into(),
             state,
+            metadata,
             value: ergo_box.value,
         };
 

@@ -194,6 +194,7 @@ async fn main() -> anyhow::Result<()> {
         sell_price1 as i64,
         expected_output.clone(),
         OrderState::Buy,
+        None,
     )?;
     let grid2 = GridOrder::new(
         owner_address,
@@ -201,6 +202,7 @@ async fn main() -> anyhow::Result<()> {
         sell_price2 as i64,
         expected_output.clone(),
         OrderState::Buy,
+        None,
     )?;
 
     let initial_value = grid1.value.checked_add(&grid2.value)?;

@@ -35,6 +35,13 @@
       recreatedBox.R6[(Coll[Byte], Long)].get == SELF.R6[(Coll[Byte], Long)].get
   )
 
+  val metadataRecreated = if(SELF.R7[Coll[Byte]].isDefined) {
+      // Enforce recreation of additional data which can be used for order grouping and tracking profits
+      recreatedBox.R7[Coll[Byte]].get == SELF.R7[Coll[Byte]].get
+  } else {
+      true
+  }
+
   val nanoErgsDifference = if(side) {
     // we are buying token - should be more ERG in our order box than in child
     SELF.value - recreatedBox.value
@@ -70,6 +77,7 @@
     ownerScript ||
     (
         orderRecreated &&
+        metadataRecreated &&
         exchangeOK &&
         (nanoErgsDifference > 0) &&
         tokensCheck &&
