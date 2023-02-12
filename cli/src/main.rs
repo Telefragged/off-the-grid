@@ -1,11 +1,13 @@
 mod grid;
 mod node;
 mod scan_config;
+mod node_config;
 mod spectrum;
 use crate::{
     grid::grid_order::{GridOrder, OrderState, MAX_FEE},
     node::client::NodeClient,
     scan_config::ScanConfig,
+    node_config::NodeConfig,
     spectrum::pool::SpectrumPool,
 };
 use anyhow::{anyhow, Context};
@@ -31,39 +33,6 @@ use ergo_lib::{
 use serde::Deserialize;
 use std::iter::once;
 use tokio::try_join;
-
-#[derive(Debug, Deserialize)]
-struct NodeConfig {
-    #[serde(default = "api_url_default")]
-    api_url: String,
-    api_key: String,
-}
-
-impl NodeConfig {
-    fn try_create(
-        config_path: Option<String>,
-        api_url: Option<String>,
-        api_key: Option<String>,
-    ) -> Result<Self, config::ConfigError> {
-        let config_required = config_path.is_some();
-
-        let scan_config_reader = Config::builder()
-            .add_source(config::Environment::with_prefix("NODE"))
-            .add_source(
-                config::File::with_name(&config_path.unwrap_or_else(|| "node_config".to_string()))
-                    .required(config_required),
-            )
-            .set_override_option("api_url", api_url)?
-            .set_override_option("api_key", api_key)?
-            .build()?;
-
-        scan_config_reader.try_deserialize()
-    }
-}
-
-fn api_url_default() -> String {
-    "http://127.0.0.1:9053".into()
-}
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
