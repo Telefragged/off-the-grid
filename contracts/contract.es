@@ -23,7 +23,7 @@
     tokenPrices._2
   }
 
-  val selfIndex = INPUTS.indexOf(SELF, 0)
+  val selfIndex = CONTEXT.selfBoxIndex
 
   val recreatedBox = OUTPUTS(selfIndex)
 
