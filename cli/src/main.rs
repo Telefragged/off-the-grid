@@ -1,9 +1,11 @@
 mod grid;
 mod node;
+mod scan_config;
 mod spectrum;
 use crate::{
     grid::grid_order::{GridOrder, OrderState, MAX_FEE},
     node::client::NodeClient,
+    scan_config::ScanConfig,
     spectrum::pool::SpectrumPool,
 };
 use anyhow::{anyhow, Context};
@@ -53,31 +55,6 @@ impl NodeConfig {
             )
             .set_override_option("api_url", api_url)?
             .set_override_option("api_key", api_key)?
-            .build()?;
-
-        scan_config_reader.try_deserialize()
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct ScanConfig {
-    pool_scan_id: i32,
-}
-
-impl ScanConfig {
-    fn try_create(
-        config_path: Option<String>,
-        pool_scan_id: Option<i32>,
-    ) -> Result<Self, config::ConfigError> {
-        let config_required = config_path.is_some();
-
-        let scan_config_reader = Config::builder()
-            .add_source(config::Environment::with_prefix("SCAN"))
-            .add_source(
-                config::File::with_name(&config_path.unwrap_or_else(|| "scan_config".to_string()))
-                    .required(config_required),
-            )
-            .set_override_option("pool_scan_id", pool_scan_id)?
             .build()?;
 
         scan_config_reader.try_deserialize()
