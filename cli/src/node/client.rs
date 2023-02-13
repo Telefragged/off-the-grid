@@ -31,10 +31,10 @@ pub enum ErgoNodeError {
     #[error("Invalid header value")]
     InvalidHeaderValue(#[from] InvalidHeaderValue),
 
-    #[error("Reqwest error {0}")]
+    #[error(transparent)]
     ReqwestError(#[from] reqwest::Error),
 
-    #[error("Api response error {0}")]
+    #[error(transparent)]
     ApiError(#[from] ApiError),
 }
 
