@@ -4,6 +4,7 @@ mod node;
 mod node_config;
 mod scan_config;
 mod spectrum;
+mod boxes;
 
 use crate::{commands::scans::ScansCommand, node::client::NodeClient, node_config::NodeConfig};
 use anyhow::Context;
