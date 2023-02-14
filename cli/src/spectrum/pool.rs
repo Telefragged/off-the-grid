@@ -29,6 +29,11 @@ lazy_static! {
         Address::P2S(base16::decode(N2T_POOL_ERGO_TREE_BASE16).unwrap());
 }
 
+#[derive(Clone)]
+pub enum PoolType {
+    N2T,
+}
+
 #[derive(Error, Debug)]
 pub enum SpectrumPoolError {
     #[error("Box parsing failed {0:?}")]
@@ -52,7 +57,7 @@ pub struct SpectrumPool {
     pub asset_y: Token,
     pub fee_num: i32,
     pub fee_denom: i32,
-    pub pool_box: ErgoBox,
+    pub pool_type: PoolType,
 }
 
 impl SpectrumPool {
@@ -158,9 +163,13 @@ impl SpectrumPool {
 
         let value = (*self.asset_x.amount.as_u64()).try_into()?;
 
+        let ergo_tree = match self.pool_type {
+            PoolType::N2T => N2T_POOL_ADDRESS.script().unwrap()
+        };
+
         Ok(ErgoBoxCandidate {
             value,
-            ergo_tree: self.pool_box.ergo_tree.clone(),
+            ergo_tree,
             tokens,
             additional_registers: registers.try_into().unwrap(),
             creation_height,
@@ -189,7 +198,7 @@ impl TryFrom<&ErgoBox> for SpectrumPool {
                     asset_y: pool_y.clone(),
                     fee_num: fee,
                     fee_denom: 1000,
-                    pool_box: pool_box.clone(),
+                    pool_type: PoolType::N2T,
                 };
                 Ok(pool)
             }
