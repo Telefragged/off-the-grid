@@ -50,7 +50,7 @@ pub enum GridOrderError {
     TokenAmountError(#[from] TokenAmountError),
 
     #[error("Failed to extract dlog from sigma proposition")]
-    ConvesionError,
+    SigmaPropConversionError,
 
     #[error("Invalid grid configuration: {0}")]
     InvalidConfiguration(#[from] GridConfigurationError),
@@ -199,7 +199,7 @@ impl TryFrom<&ErgoBox> for GridOrder {
             .value()
             .clone()
             .try_into()
-            .map_err(|_| GridOrderError::ConvesionError)?;
+            .map_err(|_| GridOrderError::SigmaPropConversionError)?;
         let (bid, ask): (i64, i64) = get_register_extract(ergo_box, NonMandatoryRegisterId::R5)?;
         let (token_id, order_amount): (TokenId, i64) =
             get_register_extract(ergo_box, NonMandatoryRegisterId::R6)?;
