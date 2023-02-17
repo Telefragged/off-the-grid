@@ -6,15 +6,20 @@ mod scan_config;
 mod spectrum;
 mod boxes;
 
-use crate::{commands::scans::ScansCommand, node::client::NodeClient, node_config::NodeConfig};
+use crate::{
+    commands::grid::GridCommand, commands::scans::ScansCommand, node::client::NodeClient,
+    node_config::NodeConfig,
+};
 use anyhow::Context;
 use clap::{arg, command, ArgAction, Parser, Subcommand};
-use commands::scans::handle_scan_command;
+use commands::{scans::handle_scan_command, grid::handle_grid_command};
 
 #[derive(Subcommand)]
 pub enum Commands {
     #[command(author, version, about, long_about = None)]
     Scans(ScansCommand),
+    #[command(author, version, about, long_about = None)]
+    Grid(GridCommand),
 }
 
 #[derive(Parser)]
@@ -61,5 +66,6 @@ async fn main() -> anyhow::Result<()> {
 
     match args.command {
         Commands::Scans(scan_command) => handle_scan_command(node, scan_command).await,
+        Commands::Grid(grid_command) => handle_grid_command(node, grid_command).await,
     }
 }
