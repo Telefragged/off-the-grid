@@ -139,8 +139,8 @@ impl GridOrder {
         })
     }
 
-    pub fn to_box_candidate(
-        &self,
+    pub fn into_box_candidate(
+        self,
         creation_height: u32,
     ) -> Result<ErgoBoxCandidate, GridOrderError> {
         let token_pair = (
@@ -149,7 +149,7 @@ impl GridOrder {
         );
 
         let mut registers: HashMap<NonMandatoryRegisterId, Constant> = HashMap::from([
-            (NonMandatoryRegisterId::R4, self.owner_dlog.clone().into()),
+            (NonMandatoryRegisterId::R4, self.owner_dlog.into()),
             (
                 NonMandatoryRegisterId::R5,
                 (i64::try_from(self.bid)?, i64::try_from(self.ask)?).into(),
@@ -157,13 +157,13 @@ impl GridOrder {
             (NonMandatoryRegisterId::R6, token_pair.into()),
         ]);
 
-        if let Some(metadata) = &self.metadata {
-            registers.insert(NonMandatoryRegisterId::R7, metadata.clone().into());
+        if let Some(metadata) = self.metadata {
+            registers.insert(NonMandatoryRegisterId::R7, metadata.into());
         }
 
         let tokens = match self.state {
             OrderState::Buy => None,
-            OrderState::Sell => Some(vec![self.token.clone()].try_into().unwrap()),
+            OrderState::Sell => Some(vec![self.token].try_into().unwrap()),
         };
 
         let order_box = ErgoBoxCandidate {
