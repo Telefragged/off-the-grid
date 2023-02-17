@@ -96,7 +96,7 @@ impl NodeClient {
         &self,
         create_scan_request: CreateScanRequest,
     ) -> Result<CreateScanResponse, ErgoNodeError> {
-        let path = "scan/create".to_string();
+        let path = "scan/register".to_string();
         let result: CreateScanResponse = self.request_post(&path, &create_scan_request).await?;
         Ok(result)
     }
