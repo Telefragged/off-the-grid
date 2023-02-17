@@ -38,7 +38,7 @@ pub enum GridConfigurationError {
     TokenLength(usize),
 
     #[error("Insufficient value to cover bid tx, {0} < {1}")]
-    BidValue(i64, i64),
+    BidValue(u64, u64),
 }
 
 #[derive(Error, Debug)]
@@ -60,9 +60,12 @@ pub enum GridOrderError {
 
     #[error("Invalid register value at {0:?}: {1}")]
     InvalidRegisterValue(NonMandatoryRegisterId, String),
+
+    #[error("{0} when converting number")]
+    TryFromIntError(#[from] std::num::TryFromIntError),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum OrderState {
     Buy,
     Sell,
@@ -70,27 +73,27 @@ pub enum OrderState {
 
 pub struct GridOrder {
     owner_dlog: ProveDlog,
-    bid: i64,
-    ask: i64,
-    token: Token,
-    state: OrderState,
+    bid: u64,
+    ask: u64,
     metadata: Option<Vec<u8>>,
+    pub token: Token,
+    pub state: OrderState,
     pub value: BoxValue,
 }
 
 impl GridOrder {
     pub fn new(
         owner_dlog: ProveDlog,
-        bid: i64,
-        ask: i64,
+        bid: u64,
+        ask: u64,
         token: Token,
         state: OrderState,
         metadata: Option<Vec<u8>>,
     ) -> Result<Self, GridOrderError> {
-        let order_amount = *token.amount.as_u64() as i64;
+        let order_amount = token.amount.as_u64();
         let value = match state {
-            OrderState::Sell => MIN_BOX_VALUE as i64,
-            OrderState::Buy => MIN_BOX_VALUE as i64 + bid * order_amount,
+            OrderState::Sell => MIN_BOX_VALUE,
+            OrderState::Buy => MIN_BOX_VALUE + bid * order_amount,
         }
         .try_into()?;
 
@@ -107,11 +110,11 @@ impl GridOrder {
         Ok(order)
     }
 
-    pub fn order_amount(&self) -> i64 {
-        *self.token.amount.as_u64() as i64
+    pub fn order_amount(&self) -> u64 {
+        *self.token.amount.as_u64()
     }
 
-    pub fn bid_value(&self) -> i64 {
+    pub fn bid_value(&self) -> u64 {
         self.order_amount() * self.bid
     }
 
@@ -119,8 +122,8 @@ impl GridOrder {
         let order_amount = self.order_amount();
 
         let value = match self.state {
-            OrderState::Sell => self.value.as_i64() + self.ask * order_amount,
-            OrderState::Buy => self.value.as_i64() - self.bid * order_amount,
+            OrderState::Sell => self.value.as_u64() + self.ask * order_amount,
+            OrderState::Buy => self.value.as_u64() - self.bid * order_amount,
         }
         .try_into()?;
 
@@ -142,12 +145,15 @@ impl GridOrder {
     ) -> Result<ErgoBoxCandidate, GridOrderError> {
         let token_pair = (
             self.token.token_id.clone(),
-            *self.token.amount.as_u64() as i64,
+            i64::try_from(*self.token.amount.as_u64())?,
         );
 
         let mut registers: HashMap<NonMandatoryRegisterId, Constant> = HashMap::from([
             (NonMandatoryRegisterId::R4, self.owner_dlog.clone().into()),
-            (NonMandatoryRegisterId::R5, (self.bid, self.ask).into()),
+            (
+                NonMandatoryRegisterId::R5,
+                (i64::try_from(self.bid)?, i64::try_from(self.ask)?).into(),
+            ),
             (NonMandatoryRegisterId::R6, token_pair.into()),
         ]);
 
@@ -212,7 +218,11 @@ impl TryFrom<&ErgoBox> for GridOrder {
             OrderState::Sell
         };
 
-        let order_token_amount: TokenAmount = (order_amount as u64).try_into()?;
+        let bid = bid.try_into()?;
+        let ask = ask.try_into()?;
+        let order_amount: u64 = order_amount.try_into()?;
+
+        let order_token_amount: TokenAmount = order_amount.try_into()?;
 
         let order = Self {
             owner_dlog,
@@ -224,8 +234,8 @@ impl TryFrom<&ErgoBox> for GridOrder {
             value: ergo_box.value,
         };
 
-        let bid_value = ergo_box.value.as_i64();
-        let min_value = MIN_BOX_VALUE as i64 + bid * order_amount;
+        let bid_value = *ergo_box.value.as_u64();
+        let min_value = MIN_BOX_VALUE + bid * order_amount;
 
         // Validate order state
         match (state, &ergo_box.tokens) {
