@@ -15,7 +15,7 @@ pub struct ApiError {
 
 impl Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{} ({}): {}", self.reason, self.error, self.detail)
     }
 }
 
@@ -34,8 +34,8 @@ pub enum ErgoNodeError {
     #[error(transparent)]
     ReqwestError(#[from] reqwest::Error),
 
-    #[error(transparent)]
-    ApiError(#[from] ApiError),
+    #[error("API error: {api_error} at {request_url}")]
+    ApiError{ api_error: ApiError, request_url: String },
 }
 
 pub struct NodeClient {
@@ -60,7 +60,7 @@ impl NodeClient {
 
         let parsed = self
             .client
-            .get(request_url)
+            .get(request_url.clone())
             .send()
             .await?
             .json::<ApiResponse<T>>()
@@ -68,7 +68,7 @@ impl NodeClient {
 
         match parsed {
             ApiResponse::Ok(t) => Ok(t),
-            ApiResponse::Err(api_error) => Err(api_error.into()),
+            ApiResponse::Err(api_error) => Err(ErgoNodeError::ApiError{ api_error, request_url }),
         }
     }
 
@@ -85,7 +85,7 @@ impl NodeClient {
 
         let parsed = self
             .client
-            .post(request_url)
+            .post(request_url.clone())
             .json(body)
             .send()
             .await?
@@ -94,7 +94,7 @@ impl NodeClient {
 
         match parsed {
             ApiResponse::Ok(t) => Ok(t),
-            ApiResponse::Err(api_error) => Err(api_error.into()),
+            ApiResponse::Err(api_error) => Err(ErgoNodeError::ApiError{ api_error, request_url }),
         }
     }
 }
