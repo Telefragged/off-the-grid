@@ -1,14 +1,16 @@
-use ergo_lib::ergotree_ir::{
-    chain::{
-        address::Address,
-        ergo_box::{
-            box_value::{BoxValue, BoxValueError},
-            ErgoBox, ErgoBoxCandidate, NonMandatoryRegisterId,
+use ergo_lib::{
+    ergo_chain_types::EcPoint,
+    ergotree_ir::{
+        chain::{
+            address::Address,
+            ergo_box::{
+                box_value::{BoxValue, BoxValueError},
+                ErgoBox, ErgoBoxCandidate, NonMandatoryRegisterId,
+            },
+            token::{Token, TokenAmount, TokenAmountError, TokenId},
         },
-        token::{Token, TokenAmount, TokenAmountError, TokenId},
+        mir::constant::{Constant, Literal, TryExtractFrom, TryExtractInto},
     },
-    mir::constant::{Constant, Literal, TryExtractFrom, TryExtractInto},
-    sigma_protocol::sigma_boolean::{ProveDlog, SigmaProp},
 };
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -17,7 +19,7 @@ use thiserror::Error;
 const MIN_BOX_VALUE: u64 = 1000000;
 pub const MAX_FEE: u64 = 2000000;
 
-const GRID_ORDER_BASE16_BYTES: &str = "100a040001010500040204000400040005000e691005040004000e36100204a00b08cd0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ea02d192a39a8cc7a701730073011001020402d19683030193a38cc7b2a57300000193c2b2a57301007473027303830108cdeeac93b1a57304058092f401d809d601e4c6a70408d602b2a5db6508fe00d603e4c6a70559d604e4c6a7064d0ed605c6a7070ed60693b1db6308a77300d6078c720402d6089572068c7203018c720302d60995720699c1a7c1720299c17202c1a7eb027201d1edededededededed93c27202c2a793e4c672020408720193e4c672020559720393e4c67202064d0e720495e6720593e4c67202070ee4720573019572069072099c720772089272099c720772089172097302957206d801d60adb63087202eded93b1720a7303938cb2720a730400018c720401938cb2720a73050002720793b1db63087202730693b0a57307d9010a4163d802d60c8c720a02d60d8c720a019593c2720c73089a720dc1720c720d7309";
+const GRID_ORDER_BASE16_BYTES: &str = "100a040001010500040204000400040005000e691005040004000e36100204a00b08cd0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ea02d192a39a8cc7a701730073011001020402d19683030193a38cc7b2a57300000193c2b2a57301007473027303830108cdeeac93b1a57304058092f401d809d601e4c6a70407d602b2a5db6508fe00d603e4c6a70559d604e4c6a7064d0ed605c6a7070ed60693b1db6308a77300d6078c720402d6089572068c7203018c720302d60995720699c1a7c1720299c17202c1a7eb02cd7201d1edededededededed93c27202c2a793e4c672020407720193e4c672020559720393e4c67202064d0e720495e6720593e4c67202070ee4720573019572069072099c720772089272099c720772089172097302957206d801d60adb63087202eded93b1720a7303938cb2720a730400018c720401938cb2720a73050002720793b1db63087202730693b0a57307d9010a4163d802d60c8c720a02d60d8c720a019593c2720c73089a720dc1720c720d7309";
 lazy_static! {
     /// Grid order P2S address
     pub static ref GRID_ORDER_ADDRESS: Address =
@@ -49,9 +51,6 @@ pub enum GridOrderError {
     #[error(transparent)]
     TokenAmountError(#[from] TokenAmountError),
 
-    #[error("Failed to extract dlog from sigma proposition")]
-    SigmaPropConversionError,
-
     #[error("Invalid grid configuration: {0}")]
     InvalidConfiguration(#[from] GridConfigurationError),
 
@@ -72,7 +71,7 @@ pub enum OrderState {
 }
 
 pub struct GridOrder {
-    owner_dlog: ProveDlog,
+    owner_ec_point: EcPoint,
     bid: u64,
     ask: u64,
     metadata: Option<Vec<u8>>,
@@ -83,7 +82,7 @@ pub struct GridOrder {
 
 impl GridOrder {
     pub fn new(
-        owner_dlog: ProveDlog,
+        owner_ec_point: EcPoint,
         bid: u64,
         ask: u64,
         token: Token,
@@ -98,7 +97,7 @@ impl GridOrder {
         .try_into()?;
 
         let order = Self {
-            owner_dlog,
+            owner_ec_point,
             bid,
             ask,
             token,
@@ -149,7 +148,7 @@ impl GridOrder {
         );
 
         let mut registers: HashMap<NonMandatoryRegisterId, Constant> = HashMap::from([
-            (NonMandatoryRegisterId::R4, self.owner_dlog.into()),
+            (NonMandatoryRegisterId::R4, self.owner_ec_point.into()),
             (
                 NonMandatoryRegisterId::R5,
                 (i64::try_from(self.bid)?, i64::try_from(self.ask)?).into(),
@@ -200,12 +199,7 @@ impl TryFrom<&ErgoBox> for GridOrder {
                 })
         }
 
-        let owner_prop: SigmaProp = get_register_extract(ergo_box, NonMandatoryRegisterId::R4)?;
-        let owner_dlog: ProveDlog = owner_prop
-            .value()
-            .clone()
-            .try_into()
-            .map_err(|_| GridOrderError::SigmaPropConversionError)?;
+        let owner_ec_point: EcPoint = get_register_extract(ergo_box, NonMandatoryRegisterId::R4)?;
         let (bid, ask): (i64, i64) = get_register_extract(ergo_box, NonMandatoryRegisterId::R5)?;
         let (token_id, order_amount): (TokenId, i64) =
             get_register_extract(ergo_box, NonMandatoryRegisterId::R6)?;
@@ -225,7 +219,7 @@ impl TryFrom<&ErgoBox> for GridOrder {
         let order_token_amount: TokenAmount = order_amount.try_into()?;
 
         let order = Self {
-            owner_dlog,
+            owner_ec_point,
             bid,
             ask,
             token: (token_id.clone(), order_token_amount).into(),

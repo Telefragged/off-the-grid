@@ -219,8 +219,8 @@ pub fn new_orders_with_liquidity(
 
     let order_step = (hi - lo) / num_orders;
 
-    let owner_address = if let Address::P2Pk(miner_pk) = owner_address {
-        Ok(miner_pk)
+    let owner_ec_point = if let Address::P2Pk(miner_pk) = owner_address {
+        Ok(*miner_pk.h)
     } else {
         Err(anyhow!("change address is not P2PK"))
     }
@@ -247,7 +247,7 @@ pub fn new_orders_with_liquidity(
                 }
                 _ => OrderState::Buy,
             };
-            GridOrder::new(owner_address.clone(), bid, ask, token, order_state, None)
+            GridOrder::new(owner_ec_point.clone(), bid, ask, token, order_state, None)
                 .map_err(BuildNewGridTxError::GridOrder)
         })
         .collect::<Result<_, _>>()?;

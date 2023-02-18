@@ -2,7 +2,7 @@
   // decentralized grid order contract for token/ERG trading, with ERG accumulation
 
   // script of order owner
-  val ownerScript = SELF.R4[SigmaProp].get
+  val ownerGroupElement = SELF.R4[GroupElement].get
 
   // token price for buy and sell respectively, in nanoErg per token
   val tokenPrices = SELF.R5[(Long, Long)].get
@@ -30,7 +30,7 @@
   // check conditions not related to trading here
   val orderRecreated = (
       recreatedBox.propositionBytes == SELF.propositionBytes &&
-      recreatedBox.R4[SigmaProp].get == SELF.R4[SigmaProp].get &&
+      recreatedBox.R4[GroupElement].get == SELF.R4[GroupElement].get &&
       recreatedBox.R5[(Long, Long)].get == SELF.R5[(Long, Long)].get &&
       recreatedBox.R6[(Coll[Byte], Long)].get == SELF.R6[(Coll[Byte], Long)].get
   )
@@ -74,7 +74,7 @@
   val feeOk = totalFee == MaxFee
 
   sigmaProp(
-    ownerScript ||
+    proveDlog(ownerGroupElement) ||
     (
         orderRecreated &&
         metadataRecreated &&
