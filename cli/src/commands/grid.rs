@@ -4,14 +4,14 @@ use anyhow::anyhow;
 use clap::{ArgGroup, Args, Subcommand};
 use ergo_lib::{
     chain::transaction::{unsigned::UnsignedTransaction, TransactionError, UnsignedInput},
-    ergo_chain_types::Digest32,
+    ergo_chain_types::{Digest32, EcPoint},
     ergotree_ir::chain::{
         address::Address,
         ergo_box::{
             box_value::{BoxValue, BoxValueError},
             ErgoBox, ErgoBoxCandidate, NonMandatoryRegisters,
         },
-        token::{Token, TokenAmountError, TokenId},
+        token::{Token, TokenAmount, TokenAmountError, TokenId},
     },
     wallet::{
         box_selector::{BoxSelector, BoxSelectorError, SimpleBoxSelector},
@@ -29,7 +29,7 @@ use crate::{
     grid::grid_order::{GridOrder, GridOrderError, OrderState},
     node::client::NodeClient,
     scan_config::ScanConfig,
-    spectrum::pool::{SpectrumPool, ERG_TOKEN_ID},
+    spectrum::pool::SpectrumPool,
 };
 
 #[derive(Subcommand)]
@@ -72,6 +72,10 @@ pub enum Commands {
             default_value_t = 1000000
         )]
         fee: u64,
+        #[clap(long, help = "Disable auto filling the grid orders")]
+        no_auto_fill: bool,
+        #[clap(short = 'y', help = "Submit transaction")]
+        submit: bool,
     },
 }
 
@@ -98,45 +102,56 @@ pub async fn handle_grid_command(
             range,
             num_orders,
             fee,
+            no_auto_fill,
+            submit,
         } => {
             let fee_value: BoxValue = fee.try_into()?;
             let token_id: TokenId = Digest32::try_from(token_id)?.into();
-            let token_per_grid: Token = match (token_amount, total_value) {
+            let token_per_grid = match (token_amount, total_value) {
                 (Some(token_amount), None) => {
                     let tokens_per_grid = token_amount / num_orders;
-                    Ok((token_id.clone(), tokens_per_grid.try_into()?).into())
+                    Ok(OrderValueTarget::Token(tokens_per_grid.try_into()?))
                 }
                 (None, Some(total_value)) => {
                     let value_per_grid = total_value / num_orders;
-                    Ok((ERG_TOKEN_ID.clone(), value_per_grid.try_into()?).into())
+                    Ok(OrderValueTarget::Value(value_per_grid.try_into()?))
                 }
                 _ => Err(anyhow!(
                     "Either token_amount or total_value must be specified"
                 )),
             }?;
 
-            let (n2t_pool_boxes, wallet_boxes, wallet_status) = try_join!(
-                node_client.get_scan_unspent(scan_config.n2t_scan_id),
+            let (wallet_boxes, wallet_status) = try_join!(
                 node_client.wallet_boxes_unspent(),
                 node_client.wallet_status()
             )?;
 
             wallet_status.error_if_locked()?;
 
-            let liquidity_box = n2t_pool_boxes
-                .into_iter()
-                .filter_map(|b| {
-                    b.try_into()
-                        .ok()
-                        .filter(|b: &TrackedBox<SpectrumPool>| b.value.asset_y.token_id == token_id)
-                })
-                .max_by_key(|lb| lb.value.amm_factor())
-                .ok_or(anyhow!("No liquidity box found for token {:?}", token_id))?;
+            let liquidity_box = if !no_auto_fill {
+                let n2t_pool_boxes = node_client
+                    .get_scan_unspent(scan_config.n2t_scan_id)
+                    .await?;
+                Some(
+                    n2t_pool_boxes
+                        .into_iter()
+                        .filter_map(|b| {
+                            b.try_into().ok().filter(|b: &TrackedBox<SpectrumPool>| {
+                                b.value.asset_y.token_id == token_id
+                            })
+                        })
+                        .max_by_key(|lb| lb.value.amm_factor())
+                        .ok_or(anyhow!("No liquidity box found for token {:?}", token_id))?,
+                )
+            } else {
+                None
+            };
 
             let tx = build_new_grid_tx(
                 liquidity_box,
                 range,
                 num_orders,
+                token_id,
                 token_per_grid,
                 wallet_status.change_address()?,
                 fee_value,
@@ -145,7 +160,12 @@ pub async fn handle_grid_command(
 
             let signed = node_client.wallet_transaction_sign(&tx).await?;
 
-            println!("{}", serde_json::to_string_pretty(&signed)?);
+            if submit {
+                let tx_id = node_client.transaction_submit(&signed).await?;
+                println!("Transaction submitted: {:?}", tx_id);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&signed)?);
+            }
 
             Ok(())
         }
@@ -198,37 +218,20 @@ fn grid_order_range_from_str(s: &str) -> Result<GridOrderRange, String> {
     }
 }
 
-/// Create new orders with the given liquidity box and the given grid range
-/// by filling the grid orders while the swaps are favorable.
-pub fn new_orders_with_liquidity(
-    liquidity_box: impl LiquidityProvider,
-    grid_range: GridOrderRange,
+fn new_orders_with_liquidity<F>(
+    liquidity_provider: impl LiquidityProvider,
     num_orders: u64,
-    token_per_grid: Token,
-    owner_address: Address,
-) -> Result<(Vec<GridOrder>, impl LiquidityProvider), BuildNewGridTxError> {
-    let GridOrderRange(lo, hi) = grid_range;
+    lo: u64,
+    order_step: u64,
+    owner_ec_point: EcPoint,
+    grid_value_fn: F,
+) -> Result<(Vec<GridOrder>, impl LiquidityProvider), BuildNewGridTxError>
+where
+    F: Fn(u64) -> u64,
+{
+    let token_id = liquidity_provider.asset_y().token_id.clone();
 
-    let grid_value_fn: Box<dyn Fn(u64) -> u64> = if token_per_grid.token_id == *ERG_TOKEN_ID {
-        Box::new(|bid: u64| token_per_grid.amount.as_u64() / bid)
-    } else {
-        Box::new(|_: u64| *token_per_grid.amount.as_u64())
-    };
-
-    let token_id = liquidity_box.asset_y().token_id.clone();
-
-    let order_step = (hi - lo) / num_orders;
-
-    let owner_ec_point = if let Address::P2Pk(miner_pk) = owner_address {
-        Ok(*miner_pk.h)
-    } else {
-        Err(anyhow!("change address is not P2PK"))
-    }
-    .unwrap();
-
-    let mut liquidity_state = liquidity_box;
-    // Total amount of tokens that will be swapped
-    let mut swap_amount: u64 = 0;
+    let mut liquidity_state = liquidity_provider;
 
     let initial_orders: Vec<_> = (0..num_orders)
         .rev()
@@ -242,7 +245,6 @@ pub fn new_orders_with_liquidity(
             let order_state = match liquidity_state.input_amount(&token) {
                 Ok(t) if *t.amount.as_u64() <= amount * bid => {
                     liquidity_state = liquidity_state.clone().with_swap(&t)?;
-                    swap_amount += t.amount.as_u64();
                     OrderState::Sell
                 }
                 _ => OrderState::Buy,
@@ -255,35 +257,124 @@ pub fn new_orders_with_liquidity(
     Ok((initial_orders, liquidity_state))
 }
 
-pub fn build_new_grid_tx(
-    liquidity_box: TrackedBox<impl LiquidityProvider>,
+fn new_orders<F>(
+    num_orders: u64,
+    lo: u64,
+    order_step: u64,
+    token_id: TokenId,
+    owner_ec_point: EcPoint,
+    grid_value_fn: F,
+) -> Result<Vec<GridOrder>, BuildNewGridTxError>
+where
+    F: Fn(u64) -> u64,
+{
+    let initial_orders: Vec<_> = (0..num_orders)
+        .rev()
+        .map(|n| {
+            let ask = lo + order_step * (n + 1);
+            let bid = lo + order_step * n;
+
+            let amount = grid_value_fn(bid);
+            let token: Token = (token_id.clone(), amount.try_into()?).into();
+
+            GridOrder::new(
+                owner_ec_point.clone(),
+                bid,
+                ask,
+                token,
+                OrderState::Buy,
+                None,
+            )
+            .map_err(BuildNewGridTxError::GridOrder)
+        })
+        .collect::<Result<_, _>>()?;
+
+    Ok(initial_orders)
+}
+
+enum OrderValueTarget {
+    Value(BoxValue),
+    Token(TokenAmount),
+}
+
+/// Build a transaction that creates a new grid of orders
+#[allow(clippy::too_many_arguments)]
+fn build_new_grid_tx(
+    liquidity_box: Option<TrackedBox<impl LiquidityProvider>>,
     grid_range: GridOrderRange,
     num_orders: u64,
-    token_per_grid: Token,
+    token_id: TokenId,
+    order_value_target: OrderValueTarget,
     owner_address: Address,
     fee_value: BoxValue,
     wallet_boxes: Vec<ErgoBox>,
 ) -> Result<UnsignedTransaction, BuildNewGridTxError> {
-    let creation_height = once(&liquidity_box.ergo_box)
+    let creation_height = liquidity_box
+        .as_ref()
+        .map(|lb| &lb.ergo_box)
+        .into_iter()
         .chain(wallet_boxes.iter())
         .map(|b| b.creation_height)
         .max()
         .unwrap_or(0);
 
-    let (initial_orders, liquidity_state) = new_orders_with_liquidity(
-        liquidity_box.value,
-        grid_range,
-        num_orders,
-        token_per_grid,
-        owner_address.clone(),
-    )?;
+    let GridOrderRange(lo, hi) = grid_range;
 
-    let missing_ergs = initial_orders.iter().map(|o| o.value.as_u64()).sum::<u64>()
-        + liquidity_state.asset_x().amount.as_u64()
-        + fee_value.as_u64()
-        - liquidity_box.ergo_box.value.as_u64();
+    let grid_value_fn: Box<dyn Fn(u64) -> u64> = match order_value_target {
+        OrderValueTarget::Value(value_per_grid) => {
+            Box::new(move |bid: u64| value_per_grid.as_u64() / bid)
+        }
+        OrderValueTarget::Token(token_per_grid) => Box::new(move |_: u64| *token_per_grid.as_u64()),
+    };
 
-    let liquidity_output = liquidity_state.into_box_candidate(creation_height)?;
+    let order_step = (hi - lo) / num_orders;
+
+    let owner_ec_point = if let Address::P2Pk(owner_dlog) = &owner_address {
+        Ok(*owner_dlog.h.clone())
+    } else {
+        Err(anyhow!("change address is not P2PK"))
+    }
+    .unwrap();
+
+    let (initial_orders, liquidity_state) = if let Some(liquidity_box) = &liquidity_box {
+        let (initial_orders, liquidity_state) = new_orders_with_liquidity(
+            liquidity_box.value.clone(),
+            num_orders,
+            lo,
+            order_step,
+            owner_ec_point,
+            grid_value_fn,
+        )?;
+
+        (initial_orders, Some(liquidity_state))
+    } else {
+        let initial_orders = new_orders(
+            num_orders,
+            lo,
+            order_step,
+            token_id,
+            owner_ec_point,
+            grid_value_fn,
+        )?;
+
+        (initial_orders, None)
+    };
+
+    let missing_ergs = initial_orders
+        .iter()
+        .map(|o| o.value.as_i64())
+        .chain(once(fee_value.as_i64()))
+        .chain(
+            liquidity_state
+                .iter()
+                .map(|s| *s.asset_x().amount.as_u64() as i64),
+        )
+        .chain(liquidity_box.iter().map(|lb| -lb.ergo_box.value.as_i64()))
+        .sum::<i64>();
+
+    let liquidity_output = liquidity_state
+        .map(|state| state.into_box_candidate(creation_height))
+        .transpose()?;
 
     let order_outputs: Vec<_> = initial_orders
         .into_iter()
@@ -300,7 +391,9 @@ pub fn build_new_grid_tx(
 
     let selection = SimpleBoxSelector::new().select(wallet_boxes, missing_ergs.try_into()?, &[])?;
 
-    let inputs: Vec<UnsignedInput> = once(liquidity_box.ergo_box.into())
+    let inputs: Vec<UnsignedInput> = liquidity_box
+        .map(|lb| lb.ergo_box.into())
+        .into_iter()
         .chain(selection.boxes.into_iter().map(|b| b.into()))
         .collect();
 
@@ -315,7 +408,8 @@ pub fn build_new_grid_tx(
             creation_height,
         });
 
-    let output_candidates: Vec<ErgoBoxCandidate> = once(liquidity_output)
+    let output_candidates: Vec<ErgoBoxCandidate> = liquidity_output
+        .into_iter()
         .chain(order_outputs)
         .chain(change_output)
         .chain(once(fee_output))
