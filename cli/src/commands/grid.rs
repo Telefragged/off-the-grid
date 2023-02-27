@@ -116,7 +116,7 @@ pub async fn handle_grid_command(
             }?;
 
             let (n2t_pool_boxes, wallet_boxes, wallet_status) = try_join!(
-                node_client.get_scan_unspent(scan_config.pool_scan_id),
+                node_client.get_scan_unspent(scan_config.n2t_scan_id),
                 node_client.wallet_boxes_unspent(),
                 node_client.wallet_status()
             )?;
