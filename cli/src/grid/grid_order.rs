@@ -70,6 +70,7 @@ pub enum OrderState {
     Sell,
 }
 
+#[derive(Clone)]
 pub struct GridOrder {
     owner_ec_point: EcPoint,
     bid: u64,
