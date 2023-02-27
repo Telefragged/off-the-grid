@@ -1,18 +1,15 @@
 mod commands;
-mod grid;
-mod node;
 mod node_config;
 mod scan_config;
-mod spectrum;
-mod boxes;
+use node_config::NodeConfig;
+use off_the_grid::node::client::NodeClient;
 
-use crate::{
-    commands::grid::GridCommand, commands::scans::ScansCommand, node::client::NodeClient,
-    node_config::NodeConfig,
-};
 use anyhow::Context;
 use clap::{arg, command, ArgAction, Parser, Subcommand};
-use commands::{scans::handle_scan_command, grid::handle_grid_command};
+use commands::{
+    grid::{handle_grid_command, GridCommand},
+    scans::{handle_scan_command, ScansCommand},
+};
 
 #[derive(Subcommand)]
 pub enum Commands {

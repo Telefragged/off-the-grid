@@ -18,19 +18,19 @@ use ergo_lib::{
         miner_fee::MINERS_FEE_ADDRESS,
     },
 };
-use thiserror::Error;
-use tokio::try_join;
-
-use crate::{
+use off_the_grid::{
     boxes::{
         liquidity_box::{LiquidityProvider, LiquidityProviderError},
         tracked_box::TrackedBox,
     },
     grid::grid_order::{GridOrder, GridOrderError, OrderState},
     node::client::NodeClient,
-    scan_config::ScanConfig,
     spectrum::pool::SpectrumPool,
 };
+use thiserror::Error;
+use tokio::try_join;
+
+use crate::scan_config::ScanConfig;
 
 #[derive(Subcommand)]
 pub enum Commands {

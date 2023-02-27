@@ -3,16 +3,16 @@ use ergo_lib::ergotree_ir::{
     chain::address::Address, mir::constant::Constant, serialization::SigmaSerializable,
     sigma_protocol::sigma_boolean::ProveDlog,
 };
-
-use crate::{
+use off_the_grid::{
     grid::grid_order::GRID_ORDER_ADDRESS,
     node::{
         client::NodeClient,
         scan::{CreateScanRequest, NodeScan, TrackingRule, WalletInteraction},
     },
-    scan_config::ScanConfig,
     spectrum::pool,
 };
+
+use crate::scan_config::ScanConfig;
 
 #[derive(Subcommand)]
 pub enum Commands {
