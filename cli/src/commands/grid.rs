@@ -1,7 +1,7 @@
 use std::iter::once;
 
 use anyhow::anyhow;
-use clap::{ArgGroup, Args, Subcommand};
+use clap::{ArgGroup, Args, Parser, Subcommand};
 use ergo_lib::{
     chain::transaction::{unsigned::UnsignedTransaction, TransactionError, UnsignedInput},
     ergo_chain_types::{Digest32, EcPoint},
@@ -32,6 +32,46 @@ use tokio::try_join;
 
 use crate::scan_config::ScanConfig;
 
+#[derive(Parser)]
+pub struct CreateOptions {
+    #[clap(short = 't', long, help = "TokenID of the token to be traded")]
+    token_id: String,
+    #[clap(
+        short = 'n',
+        long,
+        help = "Total amount of tokens to be traded",
+        group = "amount"
+    )]
+    token_amount: Option<u64>,
+    #[clap(
+        short = 'v',
+        long,
+        help = "Total value of the grid, in nanoERGs",
+        group = "amount"
+    )]
+    total_value: Option<u64>,
+    #[clap(
+        short = 'r',
+        long,
+        help = "Range of the grid, in nanoERGs per token in the form lo..hi",
+        value_parser = grid_order_range_from_str
+    )]
+    range: GridOrderRange,
+    #[clap(short = 'o', long, help = "Number of orders in the grid")]
+    num_orders: u64,
+    #[clap(
+        short,
+        long,
+        help = "transaction fee value, in nanoERGs",
+        default_value_t = 1000000
+    )]
+    fee: u64,
+    #[clap(long, help = "Disable auto filling the grid orders")]
+    no_auto_fill: bool,
+    #[clap(short = 'y', help = "Submit transaction")]
+    submit: bool,
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     #[command(group(
@@ -39,44 +79,7 @@ pub enum Commands {
             .required(true)
             .args(&["token_amount", "total_value"])
     ))]
-    Create {
-        #[clap(short = 't', long, help = "TokenID of the token to be traded")]
-        token_id: String,
-        #[clap(
-            short = 'n',
-            long,
-            help = "Total amount of tokens to be traded",
-            group = "amount"
-        )]
-        token_amount: Option<u64>,
-        #[clap(
-            short = 'v',
-            long,
-            help = "Total value of the grid, in nanoERGs",
-            group = "amount"
-        )]
-        total_value: Option<u64>,
-        #[clap(
-            short = 'r',
-            long,
-            help = "Range of the grid, in nanoERGs per token in the form lo..hi",
-            value_parser = grid_order_range_from_str
-        )]
-        range: GridOrderRange,
-        #[clap(short = 'o', long, help = "Number of orders in the grid")]
-        num_orders: u64,
-        #[clap(
-            short,
-            long,
-            help = "transaction fee value, in nanoERGs",
-            default_value_t = 1000000
-        )]
-        fee: u64,
-        #[clap(long, help = "Disable auto filling the grid orders")]
-        no_auto_fill: bool,
-        #[clap(short = 'y', help = "Submit transaction")]
-        submit: bool,
-    },
+    Create(CreateOptions),
 }
 
 #[derive(Args)]
@@ -88,6 +91,86 @@ pub struct GridCommand {
     command: Commands,
 }
 
+async fn handle_grid_create(
+    node_client: NodeClient,
+    scan_config: ScanConfig,
+    options: CreateOptions,
+) -> anyhow::Result<()> {
+    let CreateOptions {
+        token_id,
+        token_amount,
+        total_value,
+        range,
+        num_orders,
+        fee,
+        no_auto_fill,
+        submit,
+    } = options;
+    let fee_value: BoxValue = fee.try_into()?;
+    let token_id: TokenId = Digest32::try_from(token_id)?.into();
+    let token_per_grid = match (token_amount, total_value) {
+        (Some(token_amount), None) => {
+            let tokens_per_grid = token_amount / num_orders;
+            Ok(OrderValueTarget::Token(tokens_per_grid.try_into()?))
+        }
+        (None, Some(total_value)) => {
+            let value_per_grid = total_value / num_orders;
+            Ok(OrderValueTarget::Value(value_per_grid.try_into()?))
+        }
+        _ => Err(anyhow!(
+            "Either token_amount or total_value must be specified"
+        )),
+    }?;
+
+    let (wallet_boxes, wallet_status) = try_join!(
+        node_client.wallet_boxes_unspent(),
+        node_client.wallet_status()
+    )?;
+
+    wallet_status.error_if_locked()?;
+
+    let liquidity_box = if !no_auto_fill {
+        let n2t_pool_boxes = node_client
+            .get_scan_unspent(scan_config.n2t_scan_id)
+            .await?;
+        Some(
+            n2t_pool_boxes
+                .into_iter()
+                .filter_map(|b| {
+                    b.try_into()
+                        .ok()
+                        .filter(|b: &TrackedBox<SpectrumPool>| b.value.asset_y.token_id == token_id)
+                })
+                .max_by_key(|lb| lb.value.amm_factor())
+                .ok_or(anyhow!("No liquidity box found for token {:?}", token_id))?,
+        )
+    } else {
+        None
+    };
+
+    let tx = build_new_grid_tx(
+        liquidity_box,
+        range,
+        num_orders,
+        token_id,
+        token_per_grid,
+        wallet_status.change_address()?,
+        fee_value,
+        wallet_boxes,
+    )?;
+
+    let signed = node_client.wallet_transaction_sign(&tx).await?;
+
+    if submit {
+        let tx_id = node_client.transaction_submit(&signed).await?;
+        println!("Transaction submitted: {:?}", tx_id);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&signed)?);
+    }
+
+    Ok(())
+}
+
 pub async fn handle_grid_command(
     node_client: NodeClient,
     orders_command: GridCommand,
@@ -95,80 +178,7 @@ pub async fn handle_grid_command(
     let scan_config = ScanConfig::try_create(orders_command.scan_config, None)?;
 
     match orders_command.command {
-        Commands::Create {
-            token_id,
-            token_amount,
-            total_value,
-            range,
-            num_orders,
-            fee,
-            no_auto_fill,
-            submit,
-        } => {
-            let fee_value: BoxValue = fee.try_into()?;
-            let token_id: TokenId = Digest32::try_from(token_id)?.into();
-            let token_per_grid = match (token_amount, total_value) {
-                (Some(token_amount), None) => {
-                    let tokens_per_grid = token_amount / num_orders;
-                    Ok(OrderValueTarget::Token(tokens_per_grid.try_into()?))
-                }
-                (None, Some(total_value)) => {
-                    let value_per_grid = total_value / num_orders;
-                    Ok(OrderValueTarget::Value(value_per_grid.try_into()?))
-                }
-                _ => Err(anyhow!(
-                    "Either token_amount or total_value must be specified"
-                )),
-            }?;
-
-            let (wallet_boxes, wallet_status) = try_join!(
-                node_client.wallet_boxes_unspent(),
-                node_client.wallet_status()
-            )?;
-
-            wallet_status.error_if_locked()?;
-
-            let liquidity_box = if !no_auto_fill {
-                let n2t_pool_boxes = node_client
-                    .get_scan_unspent(scan_config.n2t_scan_id)
-                    .await?;
-                Some(
-                    n2t_pool_boxes
-                        .into_iter()
-                        .filter_map(|b| {
-                            b.try_into().ok().filter(|b: &TrackedBox<SpectrumPool>| {
-                                b.value.asset_y.token_id == token_id
-                            })
-                        })
-                        .max_by_key(|lb| lb.value.amm_factor())
-                        .ok_or(anyhow!("No liquidity box found for token {:?}", token_id))?,
-                )
-            } else {
-                None
-            };
-
-            let tx = build_new_grid_tx(
-                liquidity_box,
-                range,
-                num_orders,
-                token_id,
-                token_per_grid,
-                wallet_status.change_address()?,
-                fee_value,
-                wallet_boxes,
-            )?;
-
-            let signed = node_client.wallet_transaction_sign(&tx).await?;
-
-            if submit {
-                let tx_id = node_client.transaction_submit(&signed).await?;
-                println!("Transaction submitted: {:?}", tx_id);
-            } else {
-                println!("{}", serde_json::to_string_pretty(&signed)?);
-            }
-
-            Ok(())
-        }
+        Commands::Create(options) => handle_grid_create(node_client, scan_config, options).await,
     }
 }
 
