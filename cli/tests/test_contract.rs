@@ -304,3 +304,33 @@ fn filled_no_tokens() {
     let result = prove_input(initial_box, tx, prover);
     assert!(result.is_err());
 }
+
+#[test]
+fn wrong_output_index() {
+    let (grid, filled, _) = generate_test_grid();
+
+    let box_candidate = grid
+        .into_box_candidate(0)
+        .expect("Failed to create box candidate");
+
+    let initial_box = ErgoBox::from_box_candidate(&box_candidate, TxId::zero(), 0).unwrap();
+
+    let filled_box_candidate = filled
+        .into_box_candidate(0)
+        .expect("Failed to create filled box candidate");
+
+    let fee_candidate = create_fee_candidate(MAX_FEE.try_into().unwrap());
+
+    let tx = UnsignedTransaction::new_from_vec(
+        vec![initial_box.clone().into()],
+        vec![],
+        vec![fee_candidate, filled_box_candidate],
+    )
+    .unwrap();
+
+    // Force evaluation of the order filling path.
+    let prover = TestProver { secrets: vec![] };
+
+    let result = prove_input(initial_box, tx, prover);
+    assert!(result.is_err());
+}
