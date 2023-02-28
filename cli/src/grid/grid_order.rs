@@ -73,8 +73,8 @@ pub enum OrderState {
 #[derive(Clone)]
 pub struct GridOrder {
     owner_ec_point: EcPoint,
-    bid: u64,
-    ask: u64,
+    pub bid: u64,
+    pub ask: u64,
     pub metadata: Option<Vec<u8>>,
     pub token: Token,
     pub state: OrderState,

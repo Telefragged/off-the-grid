@@ -1290,6 +1290,7 @@ dependencies = [
  "clap",
  "config",
  "ergo-lib",
+ "itertools",
  "lazy_static",
  "names",
  "num-bigint",

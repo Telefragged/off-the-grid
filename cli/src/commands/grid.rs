@@ -18,6 +18,7 @@ use ergo_lib::{
         miner_fee::MINERS_FEE_ADDRESS,
     },
 };
+use itertools::Itertools;
 use off_the_grid::{
     boxes::{
         liquidity_box::{LiquidityProvider, LiquidityProviderError},
@@ -107,6 +108,10 @@ pub enum Commands {
     ))]
     Create(CreateOptions),
     Redeem(RedeemOptions),
+    List {
+        #[clap(short = 't', long, help = "TokenID to filter by")]
+        token_id: Option<String>,
+    },
 }
 
 #[derive(Args)]
@@ -273,6 +278,79 @@ pub async fn handle_grid_redeem(
     Ok(())
 }
 
+async fn handle_grid_list(
+    node_client: NodeClient,
+    scan_config: ScanConfig,
+    token_id: Option<String>,
+) -> Result<(), anyhow::Error> {
+    let token_id = token_id
+        .map(|i| Digest32::try_from(i).map(|i| i.into()))
+        .transpose()?;
+
+    let grid_orders = node_client
+        .get_scan_unspent(scan_config.wallet_grid_scan_id)
+        .await?
+        .into_iter()
+        .filter_map(|b| b.try_into().ok())
+        .filter(|b: &TrackedBox<GridOrder>| {
+            token_id
+                .as_ref()
+                .map(|i| b.value.token.token_id == *i)
+                .unwrap_or(true)
+        })
+        .collect::<Vec<_>>();
+
+    if grid_orders.is_empty() {
+        println!("No grid orders found");
+        return Ok(());
+    }
+
+    let grouped_orders = grid_orders
+        .into_iter()
+        .into_group_map_by(|o| o.value.metadata.clone());
+
+    for (grid_identity, orders) in grouped_orders {
+        let num_buy_orders = orders
+            .iter()
+            .filter(|o| o.value.state == OrderState::Buy)
+            .count();
+        let num_sell_orders = orders
+            .iter()
+            .filter(|o| o.value.state == OrderState::Sell)
+            .count();
+
+        let bid = orders
+            .iter()
+            .filter(|o| o.value.state == OrderState::Buy)
+            .map(|o| o.value.bid)
+            .min()
+            .unwrap_or_default();
+
+        let ask = orders
+            .iter()
+            .filter(|o| o.value.state == OrderState::Sell)
+            .map(|o| o.value.ask)
+            .max()
+            .unwrap_or_default();
+
+        let grid_identity = if let Some(grid_identity) = grid_identity.as_ref() {
+            String::from_utf8(grid_identity.clone())
+                .unwrap_or_else(|_| format!("{:?}", grid_identity))
+        } else {
+            "No identity".to_string()
+        };
+
+        println!("{}:", grid_identity);
+        println!("  Buy orders: {}", num_buy_orders);
+        println!("  Sell orders: {}", num_sell_orders);
+        println!("  Bid: {}", bid);
+        println!("  Ask: {}", ask);
+        println!();
+    }
+
+    Ok(())
+}
+
 pub async fn handle_grid_command(
     node_client: NodeClient,
     orders_command: GridCommand,
@@ -282,6 +360,7 @@ pub async fn handle_grid_command(
     match orders_command.command {
         Commands::Create(options) => handle_grid_create(node_client, scan_config, options).await,
         Commands::Redeem(options) => handle_grid_redeem(node_client, scan_config, options).await,
+        Commands::List { token_id } => handle_grid_list(node_client, scan_config, token_id).await,
     }
 }
 
