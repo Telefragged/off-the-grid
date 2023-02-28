@@ -70,6 +70,8 @@ pub struct CreateOptions {
     no_auto_fill: bool,
     #[clap(short = 'y', help = "Submit transaction")]
     submit: bool,
+    #[clap(short = 'i', long, help = "Grid group identity [default: random]")]
+    grid_identity: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -105,6 +107,7 @@ async fn handle_grid_create(
         fee,
         no_auto_fill,
         submit,
+        grid_identity,
     } = options;
     let fee_value: BoxValue = fee.try_into()?;
     let token_id: TokenId = Digest32::try_from(token_id)?.into();
@@ -148,6 +151,15 @@ async fn handle_grid_create(
         None
     };
 
+    let grid_identity = if let Some(grid_identity) = grid_identity {
+        grid_identity
+    } else {
+        let mut generator = names::Generator::with_naming(names::Name::Numbered);
+        generator
+            .next()
+            .ok_or(anyhow!("Failed to generate grid identity"))?
+    };
+
     let tx = build_new_grid_tx(
         liquidity_box,
         range,
@@ -157,6 +169,7 @@ async fn handle_grid_create(
         wallet_status.change_address()?,
         fee_value,
         wallet_boxes,
+        grid_identity,
     )?;
 
     let signed = node_client.wallet_transaction_sign(&tx).await?;
@@ -233,6 +246,7 @@ fn new_orders_with_liquidity<F>(
     num_orders: u64,
     lo: u64,
     order_step: u64,
+    grid_identity: String,
     owner_ec_point: EcPoint,
     grid_value_fn: F,
 ) -> Result<(Vec<GridOrder>, impl LiquidityProvider), BuildNewGridTxError>
@@ -242,6 +256,8 @@ where
     let token_id = liquidity_provider.asset_y().token_id.clone();
 
     let mut liquidity_state = liquidity_provider;
+
+    let grid_identity = grid_identity.into_bytes();
 
     let initial_orders: Vec<_> = (0..num_orders)
         .rev()
@@ -259,8 +275,15 @@ where
                 }
                 _ => OrderState::Buy,
             };
-            GridOrder::new(owner_ec_point.clone(), bid, ask, token, order_state, None)
-                .map_err(BuildNewGridTxError::GridOrder)
+            GridOrder::new(
+                owner_ec_point.clone(),
+                bid,
+                ask,
+                token,
+                order_state,
+                Some(grid_identity.clone()),
+            )
+            .map_err(BuildNewGridTxError::GridOrder)
         })
         .collect::<Result<_, _>>()?;
 
@@ -272,12 +295,15 @@ fn new_orders<F>(
     lo: u64,
     order_step: u64,
     token_id: TokenId,
+    grid_identity: String,
     owner_ec_point: EcPoint,
     grid_value_fn: F,
 ) -> Result<Vec<GridOrder>, BuildNewGridTxError>
 where
     F: Fn(u64) -> u64,
 {
+    let grid_identity = grid_identity.into_bytes();
+
     let initial_orders: Vec<_> = (0..num_orders)
         .rev()
         .map(|n| {
@@ -293,7 +319,7 @@ where
                 ask,
                 token,
                 OrderState::Buy,
-                None,
+                Some(grid_identity.clone()),
             )
             .map_err(BuildNewGridTxError::GridOrder)
         })
@@ -318,6 +344,7 @@ fn build_new_grid_tx(
     owner_address: Address,
     fee_value: BoxValue,
     wallet_boxes: Vec<ErgoBox>,
+    grid_identity: String,
 ) -> Result<UnsignedTransaction, BuildNewGridTxError> {
     let creation_height = liquidity_box
         .as_ref()
@@ -352,6 +379,7 @@ fn build_new_grid_tx(
             num_orders,
             lo,
             order_step,
+            grid_identity,
             owner_ec_point,
             grid_value_fn,
         )?;
@@ -363,6 +391,7 @@ fn build_new_grid_tx(
             lo,
             order_step,
             token_id,
+            grid_identity,
             owner_ec_point,
             grid_value_fn,
         )?;
