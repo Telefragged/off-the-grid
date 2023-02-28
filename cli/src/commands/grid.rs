@@ -74,6 +74,30 @@ pub struct CreateOptions {
     grid_identity: Option<String>,
 }
 
+#[derive(Parser)]
+#[command(group(
+    ArgGroup::new("filter")
+        .required(true)
+        .args(&["token_id", "grid_identity", "all"])
+))]
+pub struct RedeemOptions {
+    #[clap(short = 't', long, help = "TokenID to filter by")]
+    token_id: Option<String>,
+    #[clap(short = 'i', long, help = "Grid group identity")]
+    grid_identity: Option<String>,
+    #[clap(short = 'a', long, help = "Redeem all orders")]
+    all: bool,
+    #[clap(
+        short,
+        long,
+        help = "transaction fee value, in nanoERGs",
+        default_value_t = 1000000
+    )]
+    fee: u64,
+    #[clap(short = 'y', help = "Submit transaction")]
+    submit: bool,
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     #[command(group(
@@ -82,6 +106,7 @@ pub enum Commands {
             .args(&["token_amount", "total_value"])
     ))]
     Create(CreateOptions),
+    Redeem(RedeemOptions),
 }
 
 #[derive(Args)]
@@ -184,6 +209,70 @@ async fn handle_grid_create(
     Ok(())
 }
 
+pub async fn handle_grid_redeem(
+    node_client: NodeClient,
+    scan_config: ScanConfig,
+    options: RedeemOptions,
+) -> anyhow::Result<()> {
+    let RedeemOptions {
+        token_id,
+        grid_identity,
+        all: _,
+        fee,
+        submit,
+    } = options;
+
+    let grid_identity = grid_identity.map(|i| i.into_bytes());
+
+    let token_id = token_id
+        .map(|i| Digest32::try_from(i).map(|i| i.into()))
+        .transpose()?;
+
+    let grid_orders = node_client
+        .get_scan_unspent(scan_config.wallet_grid_scan_id)
+        .await?
+        .into_iter()
+        .filter_map(|b| b.try_into().ok())
+        .filter(|b: &TrackedBox<GridOrder>| {
+            grid_identity
+                .as_ref()
+                .map(|i| b.value.metadata.as_ref().map(|m| *m == *i).unwrap_or(false))
+                .unwrap_or(true)
+        })
+        .filter(|b: &TrackedBox<GridOrder>| {
+            token_id
+                .as_ref()
+                .map(|i| b.value.token.token_id == *i)
+                .unwrap_or(true)
+        })
+        .collect::<Vec<_>>();
+
+    if grid_orders.is_empty() {
+        return Err(anyhow!("No grid orders found"));
+    }
+
+    let wallet_status = node_client.wallet_status().await?;
+    wallet_status.error_if_locked()?;
+
+    let tx = build_redeem_tx(
+        grid_orders,
+        node_client.wallet_status().await?.change_address()?,
+        fee.try_into()?,
+    )
+    .unwrap();
+
+    let signed = node_client.wallet_transaction_sign(&tx).await?;
+
+    if submit {
+        let tx_id = node_client.transaction_submit(&signed).await?;
+        println!("Transaction submitted: {:?}", tx_id);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&signed)?);
+    }
+
+    Ok(())
+}
+
 pub async fn handle_grid_command(
     node_client: NodeClient,
     orders_command: GridCommand,
@@ -192,7 +281,69 @@ pub async fn handle_grid_command(
 
     match orders_command.command {
         Commands::Create(options) => handle_grid_create(node_client, scan_config, options).await,
+        Commands::Redeem(options) => handle_grid_redeem(node_client, scan_config, options).await,
     }
+}
+
+fn build_redeem_tx(
+    orders: Vec<TrackedBox<GridOrder>>,
+    change_address: Address,
+    fee_value: BoxValue,
+) -> anyhow::Result<UnsignedTransaction> {
+    let creation_height = orders
+        .iter()
+        .map(|o| o.ergo_box.creation_height)
+        .max()
+        .unwrap_or(0);
+
+    let change_value = orders
+        .iter()
+        .map(|o| o.ergo_box.value.as_u64())
+        .sum::<u64>()
+        .checked_sub(*fee_value.as_u64())
+        .ok_or(anyhow!("Not enough funds for fee"))?;
+
+    let num_outputs = if orders.len() > 1 {
+        orders.len() as u64 - 1
+    } else {
+        1
+    };
+
+    let mut remainder = change_value % num_outputs;
+
+    let change_outputs = (0..num_outputs).map(|_| -> anyhow::Result<_> {
+        let value = if remainder > 0 {
+            remainder -= 1;
+            change_value / num_outputs + 1
+        } else {
+            change_value / num_outputs
+        };
+        Ok(ErgoBoxCandidate {
+            value: value.try_into()?,
+            ergo_tree: change_address.script()?,
+            tokens: None,
+            additional_registers: NonMandatoryRegisters::empty(),
+            creation_height,
+        })
+    });
+
+    let fee_output_candidate = ErgoBoxCandidate {
+        value: fee_value,
+        ergo_tree: MINERS_FEE_ADDRESS.script().unwrap(),
+        tokens: None,
+        additional_registers: NonMandatoryRegisters::empty(),
+        creation_height,
+    };
+
+    let inputs: Vec<_> = orders.into_iter().map(|o| o.ergo_box.into()).collect();
+
+    Ok(UnsignedTransaction::new_from_vec(
+        inputs,
+        vec![],
+        change_outputs
+            .chain(once(Ok(fee_output_candidate)))
+            .collect::<anyhow::Result<_>>()?,
+    )?)
 }
 
 #[derive(Error, Debug)]

@@ -75,7 +75,7 @@ pub struct GridOrder {
     owner_ec_point: EcPoint,
     bid: u64,
     ask: u64,
-    metadata: Option<Vec<u8>>,
+    pub metadata: Option<Vec<u8>>,
     pub token: Token,
     pub state: OrderState,
     pub value: BoxValue,
