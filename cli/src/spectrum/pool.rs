@@ -52,7 +52,9 @@ impl From<SpectrumSwapError> for LiquidityProviderError {
         match e {
             SpectrumSwapError::BigIntTruncated(_) => LiquidityProviderError::InsufficientLiquidity,
             SpectrumSwapError::TokenAmountError(_) => LiquidityProviderError::Other(e.to_string()),
-            SpectrumSwapError::InvalidToken(token_id) => LiquidityProviderError::MissingToken(token_id),
+            SpectrumSwapError::InvalidToken(token_id) => {
+                LiquidityProviderError::MissingToken(token_id)
+            }
         }
     }
 }
@@ -210,14 +212,10 @@ impl LiquidityProvider for SpectrumPool {
             HashMap::from([(NonMandatoryRegisterId::R4, self.fee_num.into())]);
 
         let tokens = Some(
-            vec![
-                self.pool_nft,
-                self.asset_lp,
-                self.asset_y,
-            ]
-            .try_into()
-            // Safe to unwrap because we know the vector has 3 elements
-            .unwrap(),
+            vec![self.pool_nft, self.asset_lp, self.asset_y]
+                .try_into()
+                // Safe to unwrap because we know the vector has 3 elements
+                .unwrap(),
         );
 
         let value = (*self.asset_x.amount.as_u64()).try_into()?;
