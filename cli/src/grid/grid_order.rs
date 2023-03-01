@@ -64,7 +64,7 @@ pub enum GridOrderError {
     TryFromIntError(#[from] std::num::TryFromIntError),
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum OrderState {
     Buy,
     Sell,
@@ -116,6 +116,10 @@ impl GridOrder {
 
     pub fn bid_value(&self) -> u64 {
         self.order_amount() * self.bid
+    }
+
+    pub fn ask_value(&self) -> u64 {
+        self.order_amount() * self.ask
     }
 
     pub fn into_filled(self) -> Result<Self, GridOrderError> {
@@ -262,4 +266,17 @@ impl TryFrom<&ErgoBox> for GridOrder {
         }
         .map_err(|e| e.into())
     }
+}
+
+pub trait FillGridOrders: Sized {
+    type Error;
+
+    #[allow(clippy::type_complexity)]
+    fn fill_orders<T>(
+        self,
+        grid_orders: Vec<T>,
+        order_state: OrderState,
+    ) -> Result<(Self, Vec<(T, GridOrder)>), Self::Error>
+    where
+        T: for<'a> core::ops::Deref<Target = GridOrder>;
 }
