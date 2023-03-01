@@ -142,8 +142,8 @@ impl LiquidityProvider for SpectrumPool {
                 )
             } else {
                 (
-                    self.asset_x.amount.checked_sub(&input.amount)?,
-                    self.asset_y.amount.checked_add(&output.amount)?,
+                    self.asset_x.amount.checked_sub(&output.amount)?,
+                    self.asset_y.amount.checked_add(&input.amount)?,
                 )
             };
 
