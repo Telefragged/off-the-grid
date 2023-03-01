@@ -116,7 +116,7 @@ pub enum Commands {
 
 #[derive(Args)]
 pub struct GridCommand {
-    #[clap(long, help = "Scan configuration fiel path [default: scan_config]")]
+    #[clap(long, help = "Scan configuration file path [default: scan_config]")]
     scan_config: Option<String>,
 
     #[command(subcommand)]
