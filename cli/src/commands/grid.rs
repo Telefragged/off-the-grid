@@ -323,14 +323,14 @@ async fn handle_grid_list(
             .iter()
             .filter(|o| o.value.state == OrderState::Buy)
             .map(|o| o.value.bid)
-            .min()
+            .max()
             .unwrap_or_default();
 
         let ask = orders
             .iter()
             .filter(|o| o.value.state == OrderState::Sell)
             .map(|o| o.value.ask)
-            .max()
+            .min()
             .unwrap_or_default();
 
         let grid_identity = if let Some(grid_identity) = grid_identity.as_ref() {
