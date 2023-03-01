@@ -243,3 +243,57 @@ impl LiquidityProvider for SpectrumPool {
         &self.asset_y
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::SpectrumPool;
+    use crate::{
+        boxes::liquidity_box::LiquidityProvider,
+    };
+    use ergo_lib::{
+        ergo_chain_types::Digest32,
+    };
+
+    fn test_pool(x_amount: u64, y_amount: u64) -> SpectrumPool {
+        let mut pool_nft_id = [0u8; 32];
+        pool_nft_id[0] = 1;
+
+        let mut asset_lp_id = [0u8; 32];
+        asset_lp_id[0] = 2;
+
+        let mut asset_y_id = [0u8; 32];
+        asset_y_id[0] = 3;
+
+        SpectrumPool {
+            pool_nft: (Digest32::from(pool_nft_id).into(), 1.try_into().unwrap()).into(),
+            asset_lp: (Digest32::from(asset_lp_id).into(), 1000.try_into().unwrap()).into(),
+            asset_x: (Digest32::zero().into(), x_amount.try_into().unwrap()).into(),
+            asset_y: (
+                Digest32::from(asset_y_id).into(),
+                y_amount.try_into().unwrap(),
+            )
+                .into(),
+            fee_num: 998,
+            fee_denom: 1000,
+            pool_type: super::PoolType::N2T,
+        }
+    }
+    #[test]
+    fn swap_output() {
+        let pool = test_pool(1000000000, 1000);
+
+        let mut input = pool.asset_x.clone();
+        input.amount = 500000000.try_into().unwrap();
+
+        let output = pool.output_amount(&input).expect("Swap failed");
+
+        assert_eq!(output.token_id, pool.asset_y.token_id);
+        assert_eq!(output.amount, 332.try_into().unwrap());
+
+        let swapped = pool.with_swap(&input).expect("Swap failed");
+
+        assert_eq!(swapped.asset_y.amount, 668.try_into().unwrap());
+        assert_eq!(swapped.asset_x.amount, 1500000000.try_into().unwrap());
+    }
+}
