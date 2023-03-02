@@ -483,7 +483,7 @@ fn new_orders_with_liquidity<F>(
 where
     F: Fn(u64) -> u64,
 {
-    let token_id = liquidity_provider.asset_y().token_id.clone();
+    let token_id = liquidity_provider.asset_y().token_id;
 
     let mut liquidity_state = liquidity_provider;
 
@@ -496,7 +496,7 @@ where
             let bid = lo + order_step * n;
 
             let amount = grid_value_fn(bid);
-            let token: Token = (token_id.clone(), amount.try_into()?).into();
+            let token: Token = (token_id, amount.try_into()?).into();
 
             let order_state = match liquidity_state.input_amount(&token) {
                 Ok(t) if *t.amount.as_u64() <= amount * bid => {
@@ -541,7 +541,7 @@ where
             let bid = lo + order_step * n;
 
             let amount = grid_value_fn(bid);
-            let token: Token = (token_id.clone(), amount.try_into()?).into();
+            let token: Token = (token_id, amount.try_into()?).into();
 
             GridOrder::new(
                 owner_ec_point.clone(),

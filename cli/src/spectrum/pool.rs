@@ -114,7 +114,7 @@ impl TryFrom<&ErgoBox> for SpectrumPool {
                 let pool = Self {
                     pool_nft: pool_nft.clone(),
                     asset_lp: pool_lp.clone(),
-                    asset_x: (ERG_TOKEN_ID.clone(), x_amount).into(),
+                    asset_x: (*ERG_TOKEN_ID, x_amount).into(),
                     asset_y: pool_y.clone(),
                     fee_num: fee,
                     fee_denom: 1000,
@@ -164,7 +164,7 @@ impl LiquidityProvider for SpectrumPool {
         } else if input.token_id == self.asset_y.token_id {
             Ok((&self.asset_y, &self.asset_x))
         } else {
-            Err(SpectrumSwapError::InvalidToken(input.token_id.clone()))
+            Err(SpectrumSwapError::InvalidToken(input.token_id))
         }?;
         let from_amount = BigInt::from(*from.amount.as_u64());
         let to_amount = BigInt::from(*to.amount.as_u64());
@@ -175,10 +175,10 @@ impl LiquidityProvider for SpectrumPool {
 
         let token_amount: TokenAmount = output_amount
             .to_u64()
-            .ok_or_else(|| SpectrumSwapError::BigIntTruncated(output_amount))?
+            .ok_or(SpectrumSwapError::BigIntTruncated(output_amount))?
             .try_into()?;
 
-        Ok((to.token_id.clone(), token_amount).into())
+        Ok((to.token_id, token_amount).into())
     }
 
     fn input_amount(&self, output: &Token) -> Result<Token, LiquidityProviderError> {
@@ -187,7 +187,7 @@ impl LiquidityProvider for SpectrumPool {
         } else if output.token_id == self.asset_x.token_id {
             Ok((&self.asset_y, &self.asset_x))
         } else {
-            Err(SpectrumSwapError::InvalidToken(output.token_id.clone()))
+            Err(SpectrumSwapError::InvalidToken(output.token_id))
         }?;
         let from_amount = BigInt::from(*from.amount.as_u64());
         let to_amount = BigInt::from(*to.amount.as_u64());
@@ -199,10 +199,10 @@ impl LiquidityProvider for SpectrumPool {
 
         let token_amount: TokenAmount = input_amount
             .to_u64()
-            .ok_or_else(|| LiquidityProviderError::BigIntTruncated(input_amount))?
+            .ok_or(LiquidityProviderError::BigIntTruncated(input_amount))?
             .try_into()?;
 
-        Ok((from.token_id.clone(), token_amount).into())
+        Ok((from.token_id, token_amount).into())
     }
 
     fn into_box_candidate(
