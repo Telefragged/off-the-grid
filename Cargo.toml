@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "cli",
+]
+
+[profile.release]
+lto = "thin"
