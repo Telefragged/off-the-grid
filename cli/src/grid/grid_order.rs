@@ -5,7 +5,7 @@ use ergo_lib::{
             address::Address,
             ergo_box::{
                 box_value::{BoxValue, BoxValueError},
-                ErgoBox, ErgoBoxCandidate, NonMandatoryRegisterId,
+                ErgoBox, ErgoBoxCandidate, NonMandatoryRegisterId, NonMandatoryRegisters,
             },
             token::{Token, TokenAmount, TokenAmountError, TokenId},
         },
@@ -148,7 +148,7 @@ impl GridOrder {
         creation_height: u32,
     ) -> Result<ErgoBoxCandidate, GridOrderError> {
         let token_pair = (
-            self.token.token_id.clone(),
+            self.token.token_id,
             i64::try_from(*self.token.amount.as_u64())?,
         );
 
@@ -174,7 +174,7 @@ impl GridOrder {
             value: self.value,
             ergo_tree: GRID_ORDER_ADDRESS.script().unwrap(),
             tokens,
-            additional_registers: registers.try_into().unwrap(),
+            additional_registers: NonMandatoryRegisters::new(registers).unwrap(),
             creation_height,
         };
 
@@ -195,7 +195,7 @@ impl TryFrom<&ErgoBox> for GridOrder {
         {
             value
                 .additional_registers
-                .get(register)
+                .get_constant(register)
                 .ok_or(GridOrderError::MissingRegisterValue(register))
                 .and_then(|c| {
                     c.clone()
@@ -227,7 +227,7 @@ impl TryFrom<&ErgoBox> for GridOrder {
             owner_ec_point,
             bid,
             ask,
-            token: (token_id.clone(), order_token_amount).into(),
+            token: (token_id, order_token_amount).into(),
             state,
             metadata,
             value: ergo_box.value,
@@ -246,10 +246,7 @@ impl TryFrom<&ErgoBox> for GridOrder {
             (OrderState::Sell, Some(v)) => {
                 if let [token] = v.as_slice() {
                     if token.token_id != token_id {
-                        Err(GridConfigurationError::TokenId(
-                            token_id,
-                            token.token_id.clone(),
-                        ))
+                        Err(GridConfigurationError::TokenId(token_id, token.token_id))
                     } else if token.amount != order_token_amount {
                         Err(GridConfigurationError::TokenAmount(
                             order_token_amount,

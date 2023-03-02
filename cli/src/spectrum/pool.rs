@@ -7,6 +7,7 @@ use ergo_lib::{
             address::Address,
             ergo_box::{
                 box_value::BoxValueError, BoxId, ErgoBox, ErgoBoxCandidate, NonMandatoryRegisterId,
+                NonMandatoryRegisters,
             },
             token::{Token, TokenAmount, TokenAmountError, TokenId},
         },
@@ -102,7 +103,7 @@ impl TryFrom<&ErgoBox> for SpectrumPool {
     fn try_from(pool_box: &ErgoBox) -> Result<Self, Self::Error> {
         let fee_value = pool_box
             .additional_registers
-            .get(NonMandatoryRegisterId::R4)
+            .get_constant(NonMandatoryRegisterId::R4)
             .and_then(|x| x.clone().try_extract_into::<i32>().ok());
 
         let tokens = pool_box.tokens.as_ref().map(|v| v.as_slice());
@@ -230,7 +231,7 @@ impl LiquidityProvider for SpectrumPool {
             tokens,
             // Safe to unwrap because we know the hashmap conforms to the
             // register requirements
-            additional_registers: registers.try_into().unwrap(),
+            additional_registers: NonMandatoryRegisters::new(registers).unwrap(),
             creation_height,
         })
     }
