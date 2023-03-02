@@ -4,7 +4,7 @@ use ergo_lib::ergotree_ir::chain::{
 };
 use itertools::Itertools;
 use num_bigint::BigInt;
-use std::ops::Deref;
+use std::{cmp::Ordering, ops::Deref};
 use thiserror::Error;
 
 use crate::grid::grid_order::{FillGridOrders, GridOrder, OrderState};
@@ -45,128 +45,121 @@ pub trait LiquidityProvider: Sized + Clone {
     fn asset_y(&self) -> &Token;
 }
 
-type OrderFill<T> = (T, i64, Token, Token);
-
-fn filter_buy_orders<T: Deref<Target = GridOrder>, G: LiquidityProvider>(
-    order: T,
-    pool: &G,
-    input_amount: u64,
-    output_amount: u64,
-) -> Option<OrderFill<T>> {
-    (order.token.amount.as_u64() + output_amount)
-        .try_into()
-        .map(|output_amount| {
-            let output_id = order.token.token_id.clone();
-            (output_id, output_amount).into()
-        })
-        .ok()
-        .and_then(|output| pool.input_amount(&output).map(|input| (input, output)).ok())
-        .map(|(input, output)| {
-            let surplus =
-                order.bid_value() as i64 - (*input.amount.as_u64() as i64 - input_amount as i64);
-
-            (order, surplus, input, output)
-        })
-}
-
-fn filter_sell_orders<T: Deref<Target = GridOrder>, G: LiquidityProvider>(
-    order: T,
-    pool: &G,
-    input_amount: u64,
-    output_amount: u64,
-) -> Option<OrderFill<T>> {
-    (order.token.amount.as_u64() + input_amount)
-        .try_into()
-        .map(|input_amount| {
-            let input_id = order.token.token_id.clone();
-            (input_id, input_amount).into()
-        })
-        .ok()
-        .and_then(|input| {
-            pool.output_amount(&input)
-                .map(|output| (input, output))
-                .ok()
-        })
-        .map(|(input, output)| {
-            let surplus =
-                (*output.amount.as_u64() as i64 - output_amount as i64) - order.ask_value() as i64;
-
-            (order, surplus, input, output)
-        })
-}
-
 impl<T> FillGridOrders for T
 where
     T: LiquidityProvider,
 {
     type Error = LiquidityProviderError;
 
-    fn fill_orders<G>(
-        self,
-        grid_orders: Vec<G>,
-        order_state: OrderState,
-    ) -> Result<(Self, Vec<(G, GridOrder)>), Self::Error>
+    fn fill_orders<G>(self, grid_orders: Vec<G>) -> Result<(Self, Vec<(G, GridOrder)>), Self::Error>
     where
         G: Deref<Target = GridOrder>,
     {
         let mut orders = grid_orders;
         let mut filled_orders = vec![];
-        let mut total_input_amount = 0;
-        let mut total_output_amount = 0u64;
-
-        orders.retain(|order| order.state == order_state);
-
-        let filter_map_order = match order_state {
-            OrderState::Buy => filter_buy_orders,
-            OrderState::Sell => filter_sell_orders,
-        };
+        let mut liquidity_x_diff = 0i64;
+        let mut liquidity_y_diff = 0i64;
+        let mut current_surplus = 0i64;
 
         loop {
             let mut orders_with_surplus = orders
                 .into_iter()
-                .filter_map(|order| {
-                    filter_map_order(order, &self, total_input_amount, total_output_amount)
+                .map(|order| {
+                    let (new_x, new_y) = match order.state {
+                        OrderState::Buy => (
+                            liquidity_x_diff + order.bid_value() as i64,
+                            liquidity_y_diff - *order.token.amount.as_u64() as i64,
+                        ),
+                        OrderState::Sell => (
+                            liquidity_x_diff - order.ask_value() as i64,
+                            liquidity_y_diff + *order.token.amount.as_u64() as i64,
+                        ),
+                    };
+                    match new_y.cmp(&0) {
+                        Ordering::Greater => {
+                            let input =
+                                (self.asset_y().token_id, (new_y as u64).try_into().unwrap())
+                                    .into();
+                            if let Ok(output) = self.output_amount(&input) {
+                                let surplus = new_x + *output.amount.as_u64() as i64;
+
+                                Ok((order, new_x, new_y, surplus))
+                            } else {
+                                Err(order)
+                            }
+                        }
+                        Ordering::Less => {
+                            let output = (
+                                self.asset_y().token_id,
+                                new_y.unsigned_abs().try_into().unwrap(),
+                            )
+                                .into();
+                            if let Ok(input) = self.input_amount(&output) {
+                                let surplus = new_x - *input.amount.as_u64() as i64;
+
+                                Ok((order, new_x, new_y, surplus))
+                            } else {
+                                Err(order)
+                            }
+                        }
+                        Ordering::Equal => Ok((order, new_x, new_y, new_x)),
+                    }
                 })
-                .filter(|(_, surplus, _, _)| *surplus > 0)
-                .sorted_unstable_by_key(|(_, surplus, _, _)| *surplus)
+                // Put successful orders with the highest surplus at the end
+                .sorted_unstable_by(|lhs, rhs| match (lhs, rhs) {
+                    (Ok(_), Err(_)) => Ordering::Greater,
+                    (Err(_), Ok(_)) => Ordering::Less,
+                    (Ok((_, _, _, lhs)), Ok((_, _, _, rhs))) => lhs.cmp(rhs),
+                    (Err(_), Err(_)) => Ordering::Equal,
+                })
                 .collect::<Vec<_>>();
 
-            if let Some((order, _, input, output)) = orders_with_surplus.pop() {
-                if let Ok(filled) = order.clone().into_filled() {
-                    filled_orders.push((order, filled));
-                    total_input_amount = *input.amount.as_u64();
-                    total_output_amount = *output.amount.as_u64();
-                }
+            match orders_with_surplus.last() {
+                Some(Ok((_, _, _, surplus))) if *surplus > current_surplus => {
+                    let Ok((order, new_x, new_y, surplus)) =
+                        orders_with_surplus.pop().unwrap() else {
+                            panic!("Unreachable")
+                        };
+                    if let Ok(filled) = order.clone().into_filled() {
+                        liquidity_x_diff = new_x;
+                        liquidity_y_diff = new_y;
+                        current_surplus = surplus;
+                        filled_orders.push((order, filled));
+                    }
 
-                orders = orders_with_surplus
-                    .into_iter()
-                    .map(|(order, _, _, _)| order)
-                    .collect();
-            } else {
-                break;
+                    orders = orders_with_surplus
+                        .into_iter()
+                        .map(|choice| match choice {
+                            Ok((order, _, _, _)) => order,
+                            Err(order) => order,
+                        })
+                        .collect();
+                }
+                _ => break,
             }
         }
 
-        let swapped = if total_input_amount > 0 {
-            let input = match order_state {
-                OrderState::Buy => (
-                    self.asset_x().token_id.clone(),
-                    // Safe to unwrap because we know the amount is greater than 0
-                    total_input_amount.try_into().unwrap(),
+        match liquidity_y_diff.cmp(&0) {
+            Ordering::Greater => {
+                let input = (
+                    self.asset_y().token_id,
+                    (liquidity_y_diff as u64).try_into().unwrap(),
                 )
-                    .into(),
-                OrderState::Sell => (
-                    self.asset_y().token_id.clone(),
-                    total_input_amount.try_into().unwrap(),
+                    .into();
+                let swapped = self.with_swap(&input)?;
+                Ok((swapped, filled_orders))
+            }
+            Ordering::Less => {
+                let output = (
+                    self.asset_y().token_id,
+                    liquidity_y_diff.unsigned_abs().try_into().unwrap(),
                 )
-                    .into(),
-            };
-
-            self.with_swap(&input)?
-        } else {
-            self
-        };
-
-        Ok((swapped, filled_orders))
+                    .into();
+                let input = self.input_amount(&output)?;
+                let swapped = self.with_swap(&input)?;
+                Ok((swapped, filled_orders))
+            }
+            Ordering::Equal => Ok((self, filled_orders)),
+        }
     }
 }

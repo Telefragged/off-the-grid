@@ -14,6 +14,7 @@ use ergo_lib::{
 };
 use lazy_static::lazy_static;
 use std::collections::HashMap;
+use std::ops::Deref;
 use thiserror::Error;
 
 const MIN_BOX_VALUE: u64 = 1000000;
@@ -272,8 +273,7 @@ pub trait FillGridOrders: Sized {
     fn fill_orders<T>(
         self,
         grid_orders: Vec<T>,
-        order_state: OrderState,
     ) -> Result<(Self, Vec<(T, GridOrder)>), Self::Error>
     where
-        T: for<'a> core::ops::Deref<Target = GridOrder>;
+        T: Deref<Target = GridOrder>;
 }

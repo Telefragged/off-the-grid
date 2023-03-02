@@ -306,7 +306,7 @@ mod tests {
 
         let (new_pool, orders) = pool
             .clone()
-            .fill_orders::<&GridOrder>(vec![], OrderState::Sell)
+            .fill_orders::<&GridOrder>(vec![])
             .expect("Failed to fill grid orders");
 
         assert_eq!(pool.asset_x.amount, new_pool.asset_x.amount);
@@ -350,9 +350,7 @@ mod tests {
         let grid3 = GridOrder::new(group_element, 120000, 130000, token2, OrderState::Buy, None)
             .expect("Failed to create grid order");
 
-        let (pool, orders) = pool
-            .fill_orders(vec![&grid, &grid2, &grid3], OrderState::Buy)
-            .unwrap();
+        let (pool, orders) = pool.fill_orders(vec![&grid, &grid2, &grid3]).unwrap();
 
         for (_, order) in &orders {
             assert_eq!(order.state, OrderState::Sell);
@@ -398,9 +396,7 @@ mod tests {
         let grid3 = GridOrder::new(group_element, 70000, 80000, token2, OrderState::Sell, None)
             .expect("Failed to create grid order");
 
-        let (pool, orders) = pool
-            .fill_orders(vec![&grid, &grid2, &grid3], OrderState::Sell)
-            .unwrap();
+        let (pool, orders) = pool.fill_orders(vec![&grid, &grid2, &grid3]).unwrap();
 
         for (_, order) in &orders {
             assert_eq!(order.state, OrderState::Buy);
@@ -408,5 +404,65 @@ mod tests {
 
         assert_eq!(orders.len(), 2);
         assert_eq!(pool.asset_y.amount, 10550.try_into().unwrap());
+    }
+
+    #[test]
+    fn fill_grid_mixed() {
+        let pool = test_pool(1000000000, 10000);
+
+        let secret_key = SecretKey::random_dlog();
+
+        let group_element =
+            if let PrivateInput::DlogProverInput(dpi) = PrivateInput::from(secret_key) {
+                *dpi.public_image().h
+            } else {
+                panic!("Expected DlogProverInput")
+            };
+
+        let mut token = pool.asset_y.clone();
+
+        token.amount = 500.try_into().unwrap();
+
+        let grid = GridOrder::new(
+            group_element.clone(),
+            80000,
+            90000,
+            token,
+            OrderState::Sell,
+            None,
+        )
+        .expect("Failed to create grid order");
+
+        let grid2 = grid.clone();
+
+        let mut token2 = pool.asset_y.clone();
+
+        token2.amount = 50.try_into().unwrap();
+
+        let grid3 = GridOrder::new(
+            group_element.clone(),
+            70000,
+            80000,
+            token2,
+            OrderState::Sell,
+            None,
+        )
+        .expect("Failed to create grid order");
+
+        let mut token3 = pool.asset_y.clone();
+
+        token3.amount = 500.try_into().unwrap();
+
+        let grid4 = GridOrder::new(group_element, 110000, 120000, token3, OrderState::Buy, None)
+            .expect("Failed to create grid order");
+
+        let grid5 = grid4.clone();
+
+        let (pool, orders) = pool
+            .fill_orders(vec![&grid, &grid2, &grid3, &grid4, &grid5])
+            .unwrap();
+
+        assert_eq!(orders.len(), 5);
+        assert_eq!(pool.asset_y.amount, 10050.try_into().unwrap());
     }
 }
