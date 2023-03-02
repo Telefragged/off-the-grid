@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::ops::Deref;
 
 use ergo_lib::{
     ergo_chain_types::Digest32,
@@ -14,16 +13,12 @@ use ergo_lib::{
         mir::constant::{Constant, TryExtractInto},
     },
 };
-use itertools::Itertools;
 use lazy_static::lazy_static;
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use thiserror::Error;
 
-use crate::{
-    boxes::liquidity_box::{LiquidityProvider, LiquidityProviderError},
-    grid::grid_order::{FillGridOrders, GridOrder, OrderState},
-};
+use crate::boxes::liquidity_box::{LiquidityProvider, LiquidityProviderError};
 
 const N2T_POOL_ERGO_TREE_BASE16: &str = "1999030f0400040204020404040405feffffffffffffffff0105feffffffffffffffff01050004d00f040004000406050005000580dac409d819d601b2a5730000d602e4c6a70404d603db63087201d604db6308a7d605b27203730100d606b27204730200d607b27203730300d608b27204730400d6099973058c720602d60a999973068c7205027209d60bc17201d60cc1a7d60d99720b720cd60e91720d7307d60f8c720802d6107e720f06d6117e720d06d612998c720702720fd6137e720c06d6147308d6157e721206d6167e720a06d6177e720906d6189c72117217d6199c72157217d1ededededededed93c27201c2a793e4c672010404720293b27203730900b27204730a00938c7205018c720601938c7207018c72080193b17203730b9593720a730c95720e929c9c721072117e7202069c7ef07212069a9c72137e7214067e9c720d7e72020506929c9c721372157e7202069c7ef0720d069a9c72107e7214067e9c72127e7202050695ed720e917212730d907216a19d721872139d72197210ed9272189c721672139272199c7216721091720b730e";
 
@@ -246,137 +241,6 @@ impl LiquidityProvider for SpectrumPool {
 
     fn asset_y(&self) -> &Token {
         &self.asset_y
-    }
-}
-
-#[derive(Error, Debug)]
-pub enum FillGridOrdersError {
-    #[error(transparent)]
-    LiquidityProvider(#[from] LiquidityProviderError),
-}
-
-type OrderFill<T> = (T, i64, Token, Token);
-
-fn filter_buy_orders<T: Deref<Target = GridOrder>>(
-    order: T,
-    pool: &SpectrumPool,
-    input_amount: u64,
-    output_amount: u64,
-) -> Option<OrderFill<T>> {
-    (order.token.amount.as_u64() + output_amount)
-        .try_into()
-        .map(|output_amount| {
-            let output_id = order.token.token_id.clone();
-            (output_id, output_amount).into()
-        })
-        .ok()
-        .and_then(|output| pool.input_amount(&output).map(|input| (input, output)).ok())
-        .map(|(input, output)| {
-            let surplus =
-                order.bid_value() as i64 - (*input.amount.as_u64() as i64 - input_amount as i64);
-
-            (order, surplus, input, output)
-        })
-}
-
-fn filter_sell_orders<T: Deref<Target = GridOrder>>(
-    order: T,
-    pool: &SpectrumPool,
-    input_amount: u64,
-    output_amount: u64,
-) -> Option<OrderFill<T>> {
-    (order.token.amount.as_u64() + input_amount)
-        .try_into()
-        .map(|input_amount| {
-            let input_id = order.token.token_id.clone();
-            (input_id, input_amount).into()
-        })
-        .ok()
-        .and_then(|input| {
-            pool.output_amount(&input)
-                .map(|output| (input, output))
-                .ok()
-        })
-        .map(|(input, output)| {
-            let surplus =
-                (*output.amount.as_u64() as i64 - output_amount as i64) - order.ask_value() as i64;
-
-            (order, surplus, input, output)
-        })
-}
-
-type OrderFilterMap<T> = fn(T, &SpectrumPool, u64, u64) -> Option<OrderFill<T>>;
-
-impl FillGridOrders for SpectrumPool {
-    type Error = FillGridOrdersError;
-
-    fn fill_orders<T>(
-        self,
-        grid_orders: Vec<T>,
-        order_state: OrderState,
-    ) -> Result<(Self, Vec<(T, GridOrder)>), Self::Error>
-    where
-        T: std::ops::Deref<Target = GridOrder>,
-    {
-        let mut orders = grid_orders;
-        let mut filled_orders = vec![];
-        let mut total_input_amount = 0;
-        let mut total_output_amount = 0u64;
-
-        orders.retain(|order| order.state == order_state);
-
-        let filter_map_order: OrderFilterMap<T> = match order_state {
-            OrderState::Buy => filter_buy_orders,
-            OrderState::Sell => filter_sell_orders,
-        };
-
-        loop {
-            let mut orders_with_surplus = orders
-                .into_iter()
-                .filter_map(|order| {
-                    filter_map_order(order, &self, total_input_amount, total_output_amount)
-                })
-                .filter(|(_, surplus, _, _)| *surplus > 0)
-                .sorted_unstable_by_key(|(_, surplus, _, _)| *surplus)
-                .collect::<Vec<_>>();
-
-            if let Some((order, _, input, output)) = orders_with_surplus.pop() {
-                if let Ok(filled) = order.clone().into_filled() {
-                    filled_orders.push((order, filled));
-                    total_input_amount = *input.amount.as_u64();
-                    total_output_amount = *output.amount.as_u64();
-                }
-
-                orders = orders_with_surplus
-                    .into_iter()
-                    .map(|(order, _, _, _)| order)
-                    .collect();
-            } else {
-                break;
-            }
-        }
-
-        let pool = if total_input_amount > 0 {
-            let input = match order_state {
-                OrderState::Buy => (
-                    self.asset_x.token_id.clone(),
-                    // Safe to unwrap because we know the amount is greater than 0
-                    total_input_amount.try_into().unwrap(),
-                )
-                    .into(),
-                OrderState::Sell => (
-                    self.asset_y.token_id.clone(),
-                    total_input_amount.try_into().unwrap(),
-                )
-                    .into(),
-            };
-
-            self.with_swap(&input)?
-        } else {
-            self
-        };
-
-        Ok((pool, filled_orders))
     }
 }
 
