@@ -22,13 +22,21 @@ pub enum Commands {
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct GridArgs {
-    #[arg(long, help = "Node configuration file path [default: node_config]")]
+    #[arg(
+        long,
+        help = "Node configuration file path [default: node_config]",
+        global(true)
+    )]
     node_config: Option<String>,
 
-    #[arg(long, help = "Ergo node API URL [default: http://127.0.0.1:9053]")]
+    #[arg(
+        long,
+        help = "Ergo node API URL [default: http://127.0.0.1:9053]",
+        global(true)
+    )]
     api_url: Option<String>,
 
-    #[arg(long, help = "Ergo node API key")]
+    #[arg(long, help = "Ergo node API key", global(true))]
     api_key: Option<String>,
 
     #[command(subcommand)]
