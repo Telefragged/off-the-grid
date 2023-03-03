@@ -113,7 +113,9 @@ impl TryFrom<&ErgoBox> for SpectrumPool {
         let tokens = pool_box.tokens.as_ref().map(|v| v.as_slice());
 
         match (tokens, fee_value) {
-            (Some([pool_nft, pool_lp, pool_y]), Some(fee)) => {
+            (Some([pool_nft, pool_lp, pool_y]), Some(fee))
+                if pool_box.ergo_tree == *N2T_POOL_SCRIPT =>
+            {
                 let x_amount = TokenAmount::try_from(*pool_box.value.as_u64())?;
                 let pool = Self {
                     pool_nft: pool_nft.clone(),
