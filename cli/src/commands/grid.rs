@@ -18,6 +18,7 @@ use ergo_lib::{
         miner_fee::MINERS_FEE_ADDRESS,
     },
 };
+use fraction::{Fraction, ToPrimitive};
 use itertools::Itertools;
 use off_the_grid::{
     boxes::{
@@ -439,6 +440,8 @@ pub enum BuildNewGridTxError {
     BoxSelector(#[from] BoxSelectorError),
     #[error(transparent)]
     Transaction(#[from] TransactionError),
+    #[error("Invalid fraction: {0}")]
+    InvalidFraction(Fraction),
 }
 
 #[derive(Clone, Debug)]
@@ -471,17 +474,23 @@ fn grid_order_range_from_str(s: &str) -> Result<GridOrderRange, String> {
     }
 }
 
+fn fraction_to_u64(fraction: Fraction) -> Result<u64, BuildNewGridTxError> {
+    fraction
+        .to_u64()
+        .ok_or(BuildNewGridTxError::InvalidFraction(fraction))
+}
+
 fn new_orders_with_liquidity<F>(
     liquidity_provider: impl LiquidityProvider,
     num_orders: u64,
     lo: u64,
-    order_step: u64,
+    order_step: Fraction,
     grid_identity: String,
     owner_ec_point: EcPoint,
     grid_value_fn: F,
 ) -> Result<(Vec<GridOrder>, impl LiquidityProvider), BuildNewGridTxError>
 where
-    F: Fn(u64) -> u64,
+    F: Fn(Fraction) -> Result<u64, BuildNewGridTxError>,
 {
     let token_id = liquidity_provider.asset_y().token_id;
 
@@ -492,14 +501,16 @@ where
     let initial_orders: Vec<_> = (0..num_orders)
         .rev()
         .map(|n| {
-            let ask = lo + order_step * (n + 1);
-            let bid = lo + order_step * n;
+            let ask = Fraction::from(lo) + order_step * (n + 1);
+            let bid = Fraction::from(lo) + order_step * n;
 
-            let amount = grid_value_fn(bid);
+            let amount = grid_value_fn(bid)?;
             let token: Token = (token_id, amount.try_into()?).into();
 
+            let bid_amount = fraction_to_u64((bid * amount).floor())?;
+
             let order_state = match liquidity_state.input_amount(&token) {
-                Ok(t) if *t.amount.as_u64() <= amount * bid => {
+                Ok(t) if *t.amount.as_u64() <= bid_amount => {
                     liquidity_state = liquidity_state.clone().with_swap(&t)?;
                     OrderState::Sell
                 }
@@ -507,8 +518,8 @@ where
             };
             GridOrder::new(
                 owner_ec_point.clone(),
-                bid * amount,
-                ask * amount,
+                bid_amount,
+                fraction_to_u64((ask * amount).ceil())?,
                 token,
                 order_state,
                 Some(grid_identity.clone()),
@@ -523,30 +534,30 @@ where
 fn new_orders<F>(
     num_orders: u64,
     lo: u64,
-    order_step: u64,
+    order_step: Fraction,
     token_id: TokenId,
     grid_identity: String,
     owner_ec_point: EcPoint,
     grid_value_fn: F,
 ) -> Result<Vec<GridOrder>, BuildNewGridTxError>
 where
-    F: Fn(u64) -> u64,
+    F: Fn(Fraction) -> Result<u64, BuildNewGridTxError>,
 {
     let grid_identity = grid_identity.into_bytes();
 
     let initial_orders: Vec<_> = (0..num_orders)
         .rev()
         .map(|n| {
-            let ask = lo + order_step * (n + 1);
-            let bid = lo + order_step * n;
+            let ask = Fraction::from(lo) + order_step * (n + 1);
+            let bid = Fraction::from(lo) + order_step * n;
 
-            let amount = grid_value_fn(bid);
+            let amount = grid_value_fn(bid)?;
             let token: Token = (token_id, amount.try_into()?).into();
 
             GridOrder::new(
                 owner_ec_point.clone(),
-                bid * amount,
-                ask * amount,
+                fraction_to_u64((bid * amount).floor())?,
+                fraction_to_u64((ask * amount).ceil())?,
                 token,
                 OrderState::Buy,
                 Some(grid_identity.clone()),
@@ -587,14 +598,17 @@ fn build_new_grid_tx(
 
     let GridOrderRange(lo, hi) = grid_range;
 
-    let grid_value_fn: Box<dyn Fn(u64) -> u64> = match order_value_target {
-        OrderValueTarget::Value(value_per_grid) => {
-            Box::new(move |bid: u64| value_per_grid.as_u64() / bid)
-        }
-        OrderValueTarget::Token(token_per_grid) => Box::new(move |_: u64| *token_per_grid.as_u64()),
-    };
+    let grid_value_fn: Box<dyn Fn(Fraction) -> Result<u64, BuildNewGridTxError>> =
+        match order_value_target {
+            OrderValueTarget::Value(value_per_grid) => Box::new(move |bid: Fraction| {
+                fraction_to_u64((Fraction::from(*value_per_grid.as_u64()) / bid).floor())
+            }),
+            OrderValueTarget::Token(token_per_grid) => {
+                Box::new(move |_: Fraction| Ok(*token_per_grid.as_u64()))
+            }
+        };
 
-    let order_step = (hi - lo) / num_orders;
+    let order_step = Fraction::new(hi - lo, num_orders);
 
     let owner_ec_point = if let Address::P2Pk(owner_dlog) = &owner_address {
         Ok(*owner_dlog.h.clone())
