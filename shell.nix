@@ -11,6 +11,5 @@ in pkgs.mkShell {
     rust
     openssl
     pkg-config
-    openapi-generator-cli
   ];
 }
