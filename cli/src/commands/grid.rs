@@ -322,15 +322,15 @@ async fn handle_grid_list(
         let bid = orders
             .iter()
             .filter(|o| o.value.state == OrderState::Buy)
-            .map(|o| o.value.bid)
-            .max()
+            .map(|o| o.value.bid())
+            .reduce(f64::max)
             .unwrap_or_default();
 
         let ask = orders
             .iter()
             .filter(|o| o.value.state == OrderState::Sell)
-            .map(|o| o.value.ask)
-            .min()
+            .map(|o| o.value.ask())
+            .reduce(f64::min)
             .unwrap_or_default();
 
         let grid_identity = if let Some(grid_identity) = grid_identity.as_ref() {
@@ -507,8 +507,8 @@ where
             };
             GridOrder::new(
                 owner_ec_point.clone(),
-                bid,
-                ask,
+                bid * amount,
+                ask * amount,
                 token,
                 order_state,
                 Some(grid_identity.clone()),
@@ -545,8 +545,8 @@ where
 
             GridOrder::new(
                 owner_ec_point.clone(),
-                bid,
-                ask,
+                bid * amount,
+                ask * amount,
                 token,
                 OrderState::Buy,
                 Some(grid_identity.clone()),

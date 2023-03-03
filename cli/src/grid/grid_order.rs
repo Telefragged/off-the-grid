@@ -77,8 +77,8 @@ pub enum OrderState {
 #[derive(Clone)]
 pub struct GridOrder {
     owner_ec_point: EcPoint,
-    pub bid: u64,
-    pub ask: u64,
+    pub bid_value: u64,
+    pub ask_value: u64,
     pub metadata: Option<Vec<u8>>,
     pub token: Token,
     pub state: OrderState,
@@ -88,23 +88,22 @@ pub struct GridOrder {
 impl GridOrder {
     pub fn new(
         owner_ec_point: EcPoint,
-        bid: u64,
-        ask: u64,
+        bid_value: u64,
+        ask_value: u64,
         token: Token,
         state: OrderState,
         metadata: Option<Vec<u8>>,
     ) -> Result<Self, GridOrderError> {
-        let order_amount = token.amount.as_u64();
         let value = match state {
             OrderState::Sell => MIN_BOX_VALUE,
-            OrderState::Buy => MIN_BOX_VALUE + bid * order_amount,
+            OrderState::Buy => MIN_BOX_VALUE + bid_value,
         }
         .try_into()?;
 
         let order = Self {
             owner_ec_point,
-            bid,
-            ask,
+            bid_value,
+            ask_value,
             token,
             state,
             value,
@@ -118,20 +117,18 @@ impl GridOrder {
         *self.token.amount.as_u64()
     }
 
-    pub fn bid_value(&self) -> u64 {
-        self.order_amount() * self.bid
+    pub fn bid(&self) -> f64 {
+        self.bid_value as f64 / self.order_amount() as f64
     }
 
-    pub fn ask_value(&self) -> u64 {
-        self.order_amount() * self.ask
+    pub fn ask(&self) -> f64 {
+        self.ask_value as f64 / self.order_amount() as f64
     }
 
     pub fn into_filled(self) -> Result<Self, GridOrderError> {
-        let order_amount = self.order_amount();
-
         let value = match self.state {
-            OrderState::Sell => self.value.as_u64() + self.ask * order_amount,
-            OrderState::Buy => self.value.as_u64() - self.bid * order_amount,
+            OrderState::Sell => self.value.as_u64() + self.ask_value,
+            OrderState::Buy => self.value.as_u64() - self.bid_value,
         }
         .try_into()?;
 
@@ -160,7 +157,11 @@ impl GridOrder {
             (NonMandatoryRegisterId::R4, self.owner_ec_point.into()),
             (
                 NonMandatoryRegisterId::R5,
-                (i64::try_from(self.bid)?, i64::try_from(self.ask)?).into(),
+                (
+                    i64::try_from(self.bid_value)?,
+                    i64::try_from(self.ask_value)?,
+                )
+                    .into(),
             ),
             (NonMandatoryRegisterId::R6, token_pair.into()),
         ]);
@@ -209,7 +210,8 @@ impl TryFrom<&ErgoBox> for GridOrder {
         }
 
         let owner_ec_point: EcPoint = get_register_extract(ergo_box, NonMandatoryRegisterId::R4)?;
-        let (bid, ask): (i64, i64) = get_register_extract(ergo_box, NonMandatoryRegisterId::R5)?;
+        let (bid_value, ask_value): (i64, i64) =
+            get_register_extract(ergo_box, NonMandatoryRegisterId::R5)?;
         let (token_id, order_amount): (TokenId, i64) =
             get_register_extract(ergo_box, NonMandatoryRegisterId::R6)?;
         let metadata: Option<Vec<u8>> =
@@ -221,31 +223,31 @@ impl TryFrom<&ErgoBox> for GridOrder {
             OrderState::Sell
         };
 
-        let bid = bid.try_into()?;
-        let ask = ask.try_into()?;
+        let bid_value = bid_value.try_into()?;
+        let ask_value = ask_value.try_into()?;
         let order_amount: u64 = order_amount.try_into()?;
 
         let order_token_amount: TokenAmount = order_amount.try_into()?;
 
         let order = Self {
             owner_ec_point,
-            bid,
-            ask,
+            bid_value,
+            ask_value,
             token: (token_id, order_token_amount).into(),
             state,
             metadata,
             value: ergo_box.value,
         };
 
-        let bid_value = *ergo_box.value.as_u64();
-        let min_value = MIN_BOX_VALUE + bid * order_amount;
+        let current_bid_value = *ergo_box.value.as_u64();
+        let min_value = MIN_BOX_VALUE + bid_value;
 
         // Validate order state
         match (state, &ergo_box.tokens) {
             (OrderState::Buy, Some(v)) => Err(GridConfigurationError::TokenLength(v.len())),
-            (OrderState::Buy, None) if bid_value < min_value => {
-                Err(GridConfigurationError::BidValue(bid_value, min_value))
-            }
+            (OrderState::Buy, None) if current_bid_value < min_value => Err(
+                GridConfigurationError::BidValue(current_bid_value, min_value),
+            ),
             (OrderState::Sell, None) => Err(GridConfigurationError::TokenLength(0)),
             (OrderState::Sell, Some(v)) => {
                 if let [token] = v.as_slice() {

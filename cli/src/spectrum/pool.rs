@@ -337,8 +337,8 @@ mod tests {
 
         let grid = GridOrder::new(
             group_element.clone(),
-            110000,
-            120000,
+            55000000,
+            60000000,
             token,
             OrderState::Buy,
             None,
@@ -351,8 +351,15 @@ mod tests {
 
         token2.amount = 50.try_into().unwrap();
 
-        let grid3 = GridOrder::new(group_element, 120000, 130000, token2, OrderState::Buy, None)
-            .expect("Failed to create grid order");
+        let grid3 = GridOrder::new(
+            group_element,
+            6000000,
+            6500000,
+            token2,
+            OrderState::Buy,
+            None,
+        )
+        .expect("Failed to create grid order");
 
         let (pool, orders) = pool.fill_orders(vec![&grid, &grid2, &grid3]).unwrap();
 
@@ -383,8 +390,8 @@ mod tests {
 
         let grid = GridOrder::new(
             group_element.clone(),
-            80000,
-            90000,
+            40000000,
+            45000000,
             token,
             OrderState::Sell,
             None,
@@ -397,8 +404,15 @@ mod tests {
 
         token2.amount = 50.try_into().unwrap();
 
-        let grid3 = GridOrder::new(group_element, 70000, 80000, token2, OrderState::Sell, None)
-            .expect("Failed to create grid order");
+        let grid3 = GridOrder::new(
+            group_element,
+            3500000,
+            4000000,
+            token2,
+            OrderState::Sell,
+            None,
+        )
+        .expect("Failed to create grid order");
 
         let (pool, orders) = pool.fill_orders(vec![&grid, &grid2, &grid3]).unwrap();
 
@@ -429,8 +443,8 @@ mod tests {
 
         let grid = GridOrder::new(
             group_element.clone(),
-            80000,
-            90000,
+            40000000,
+            45000000,
             token,
             OrderState::Sell,
             None,
@@ -445,8 +459,8 @@ mod tests {
 
         let grid3 = GridOrder::new(
             group_element.clone(),
-            70000,
-            80000,
+            3500000,
+            4000000,
             token2,
             OrderState::Sell,
             None,
@@ -457,8 +471,15 @@ mod tests {
 
         token3.amount = 500.try_into().unwrap();
 
-        let grid4 = GridOrder::new(group_element, 110000, 120000, token3, OrderState::Buy, None)
-            .expect("Failed to create grid order");
+        let grid4 = GridOrder::new(
+            group_element,
+            55000000,
+            60000000,
+            token3,
+            OrderState::Buy,
+            None,
+        )
+        .expect("Failed to create grid order");
 
         let grid5 = grid4.clone();
 

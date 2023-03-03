@@ -67,11 +67,11 @@ where
                 .map(|order| {
                     let (new_x, new_y) = match order.state {
                         OrderState::Buy => (
-                            liquidity_x_diff + order.bid_value() as i64,
+                            liquidity_x_diff + order.bid_value as i64,
                             liquidity_y_diff - *order.token.amount.as_u64() as i64,
                         ),
                         OrderState::Sell => (
-                            liquidity_x_diff - order.ask_value() as i64,
+                            liquidity_x_diff - order.ask_value as i64,
                             liquidity_y_diff + *order.token.amount.as_u64() as i64,
                         ),
                     };

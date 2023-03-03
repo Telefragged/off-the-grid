@@ -4,8 +4,8 @@
   // script of order owner
   val ownerGroupElement = SELF.R4[GroupElement].get
 
-  // token price for buy and sell respectively, in nanoErg per token
-  val tokenPrices = SELF.R5[(Long, Long)].get
+  // total price of order for buy and sell respectively, in nanoERGs
+  val orderValues = SELF.R5[(Long, Long)].get
 
   //BUY means we are buying tokens with ERGs, SELL means we sell tokens for ERGs
   val order = SELF.R6[(Coll[Byte], Long)].get
@@ -17,10 +17,10 @@
   //our order side, TRUE == BUY, FALSE == SELL
   val side = SELF.tokens.size == 0
 
-  val tokenPrice = if (side) {
-    tokenPrices._1
+  val orderValue = if (side) {
+    orderValues._1
   } else {
-    tokenPrices._2
+    orderValues._2
   }
 
   val selfIndex = CONTEXT.selfBoxIndex
@@ -61,9 +61,9 @@
   }
 
   val exchangeOK = if(side) {
-    nanoErgsDifference <= orderSize * tokenPrice
+    nanoErgsDifference <= orderValue
   } else {
-    nanoErgsDifference >= orderSize * tokenPrice
+    nanoErgsDifference >= orderValue
   }
 
   val totalFee = OUTPUTS.fold(0L, {
