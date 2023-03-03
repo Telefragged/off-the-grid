@@ -11,6 +11,7 @@ use ergo_lib::{
             },
             token::{Token, TokenAmount, TokenAmountError, TokenId},
         },
+        ergo_tree::ErgoTree,
         mir::constant::{Constant, TryExtractInto},
     },
 };
@@ -31,6 +32,9 @@ lazy_static! {
     pub static ref N2T_POOL_ADDRESS: Address =
         #[allow(clippy::unwrap_used)]
         Address::P2S(base16::decode(N2T_POOL_ERGO_TREE_BASE16).unwrap());
+
+    pub static ref N2T_POOL_SCRIPT: ErgoTree =
+        N2T_POOL_ADDRESS.script().unwrap();
 }
 
 #[derive(Clone)]
@@ -222,7 +226,7 @@ impl LiquidityProvider for SpectrumPool {
         let value = (*self.asset_x.amount.as_u64()).try_into()?;
 
         let ergo_tree = match self.pool_type {
-            PoolType::N2T => N2T_POOL_ADDRESS.script().unwrap(),
+            PoolType::N2T => N2T_POOL_SCRIPT.clone(),
         };
 
         Ok(ErgoBoxCandidate {

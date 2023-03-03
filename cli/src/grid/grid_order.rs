@@ -9,6 +9,7 @@ use ergo_lib::{
             },
             token::{Token, TokenAmount, TokenAmountError, TokenId},
         },
+        ergo_tree::ErgoTree,
         mir::constant::{Constant, Literal, TryExtractFrom, TryExtractInto},
     },
 };
@@ -27,6 +28,8 @@ lazy_static! {
         #[allow(clippy::unwrap_used)]
         Address::P2S(GRID_ORDER_BASE16_BYTES.to_vec());
 
+    /// Grid order P2S script
+    pub static ref GRID_ORDER_SCRIPT: ErgoTree = GRID_ORDER_ADDRESS.script().unwrap();
 }
 
 #[derive(Error, Debug)]
@@ -173,7 +176,7 @@ impl GridOrder {
 
         let order_box = ErgoBoxCandidate {
             value: self.value,
-            ergo_tree: GRID_ORDER_ADDRESS.script().unwrap(),
+            ergo_tree: GRID_ORDER_SCRIPT.clone(),
             tokens,
             additional_registers: NonMandatoryRegisters::new(registers).unwrap(),
             creation_height,

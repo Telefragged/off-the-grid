@@ -4,7 +4,7 @@ use ergo_lib::ergotree_ir::{
     sigma_protocol::sigma_boolean::ProveDlog,
 };
 use off_the_grid::{
-    grid::grid_order::GRID_ORDER_ADDRESS,
+    grid::grid_order::GRID_ORDER_SCRIPT,
     node::{
         client::NodeClient,
         scan::{CreateScanRequest, NodeScan, TrackingRule, WalletInteraction},
@@ -30,12 +30,8 @@ pub struct ScansCommand {
 }
 
 fn n2t_tracking_rule() -> TrackingRule {
-    // Safe to unwrap because the script is always valid
-    let n2t_scan_script = pool::N2T_POOL_ADDRESS
-        .script()
-        .ok()
-        .and_then(|s| s.sigma_serialize_bytes().ok())
-        .unwrap();
+    // We assume the pool script is always valid
+    let n2t_scan_script = pool::N2T_POOL_SCRIPT.sigma_serialize_bytes().unwrap();
     let n2t_scan_value = Constant::from(n2t_scan_script);
     let n2t_scan_value_bytes = n2t_scan_value.sigma_serialize_bytes().unwrap();
 
@@ -46,12 +42,8 @@ fn n2t_tracking_rule() -> TrackingRule {
 }
 
 fn wallet_grid_tracking_rule(owner_dlog: ProveDlog) -> TrackingRule {
-    // Safe to unwrap because the script is always valid
-    let wallet_grid_script = GRID_ORDER_ADDRESS
-        .script()
-        .ok()
-        .and_then(|s| s.sigma_serialize_bytes().ok())
-        .unwrap();
+    // We assume the grid order script is always valid
+    let wallet_grid_script = GRID_ORDER_SCRIPT.sigma_serialize_bytes().unwrap();
 
     let wallet_grid_value: Constant = wallet_grid_script.into();
     let wallet_grid_value_bytes = wallet_grid_value.sigma_serialize_bytes().unwrap();
