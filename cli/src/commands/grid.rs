@@ -18,7 +18,7 @@ use ergo_lib::{
         miner_fee::MINERS_FEE_ADDRESS,
     },
 };
-use fraction::{Fraction, ToPrimitive};
+use fraction::{BigFraction as Fraction, ToPrimitive};
 use itertools::Itertools;
 use off_the_grid::{
     boxes::{
@@ -501,10 +501,10 @@ where
     let initial_orders: Vec<_> = (0..num_orders)
         .rev()
         .map(|n| {
-            let ask = Fraction::from(lo) + order_step * (n + 1);
-            let bid = Fraction::from(lo) + order_step * n;
+            let ask = Fraction::from(lo) + &order_step * (n + 1);
+            let bid = Fraction::from(lo) + &order_step * n;
 
-            let amount = grid_value_fn(bid)?;
+            let amount = grid_value_fn(bid.clone())?;
             let token: Token = (token_id, amount.try_into()?).into();
 
             let bid_amount = fraction_to_u64((bid * amount).floor())?;
@@ -548,10 +548,10 @@ where
     let initial_orders: Vec<_> = (0..num_orders)
         .rev()
         .map(|n| {
-            let ask = Fraction::from(lo) + order_step * (n + 1);
-            let bid = Fraction::from(lo) + order_step * n;
+            let ask = Fraction::from(lo) + &order_step * (n + 1);
+            let bid = Fraction::from(lo) + &order_step * n;
 
-            let amount = grid_value_fn(bid)?;
+            let amount = grid_value_fn(bid.clone())?;
             let token: Token = (token_id, amount.try_into()?).into();
 
             GridOrder::new(
