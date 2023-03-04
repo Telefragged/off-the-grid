@@ -9,6 +9,7 @@ use clap::{arg, command, ArgAction, Parser, Subcommand};
 use commands::{
     grid::{handle_grid_command, GridCommand},
     scans::{handle_scan_command, ScansCommand},
+    units::{handle_units_command, UnitsCommand},
 };
 
 #[derive(Subcommand)]
@@ -17,6 +18,8 @@ pub enum Commands {
     Scans(ScansCommand),
     #[command(author, version, about, long_about = None)]
     Grid(GridCommand),
+    #[command(author, version, about, long_about = None)]
+    Units(UnitsCommand),
 }
 
 #[derive(Parser)]
@@ -72,5 +75,6 @@ async fn main() -> anyhow::Result<()> {
     match args.command {
         Commands::Scans(scan_command) => handle_scan_command(node, scan_command).await,
         Commands::Grid(grid_command) => handle_grid_command(node, grid_command).await,
+        Commands::Units(units_command) => handle_units_command(node, units_command).await,
     }
 }
