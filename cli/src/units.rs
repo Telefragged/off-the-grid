@@ -95,8 +95,7 @@ impl Display for UnitAmount {
 pub struct Price {
     base: Unit,
     quote: Unit,
-    // Numerator base, denominator quote
-    amount: Fraction,
+    price: Fraction,
 }
 
 impl Price {
@@ -104,7 +103,7 @@ impl Price {
         Self {
             base,
             quote,
-            amount,
+            price: amount,
         }
     }
 
@@ -112,14 +111,14 @@ impl Price {
         Self {
             base: self.quote.clone(),
             quote: self.base.clone(),
-            amount: self.amount.recip(),
+            price: self.price.recip(),
         }
     }
 
     pub fn format(&self) -> String {
         format!(
             "{0:.1$} {2}/{3}",
-            self.amount.clone() * Fraction::new(self.base.base_amount(), self.quote.base_amount()),
+            self.price.clone() * Fraction::new(self.base.base_amount(), self.quote.base_amount()),
             self.quote.decimals() as usize,
             self.base.name(),
             self.quote.name()
@@ -128,13 +127,13 @@ impl Price {
 
     pub fn convert_price(&self, other: &UnitAmount) -> Option<UnitAmount> {
         if self.base == *other.unit() {
-            let amount = self.amount.clone() * other.amount;
+            let amount = self.price.clone() * other.amount;
             Some(UnitAmount::new(
                 self.quote.clone(),
                 amount.floor().to_u64().unwrap_or_default(),
             ))
         } else if self.quote == *other.unit() {
-            let self_recip = self.amount.recip();
+            let self_recip = self.price.recip();
             let amount = self_recip * other.amount();
             Some(UnitAmount::new(
                 self.base.clone(),
