@@ -1,6 +1,8 @@
 mod commands;
+mod matcher_config;
 mod node_config;
 mod scan_config;
+
 use node_config::NodeConfig;
 use off_the_grid::node::client::NodeClient;
 
@@ -8,6 +10,7 @@ use anyhow::Context;
 use clap::{arg, command, ArgAction, Parser, Subcommand};
 use commands::{
     grid::{handle_grid_command, GridCommand},
+    matcher::{handle_matcher_command, MatcherCommand},
     scans::{handle_scan_command, ScansCommand},
     units::{handle_units_command, UnitsCommand},
 };
@@ -18,6 +21,8 @@ pub enum Commands {
     Scans(ScansCommand),
     #[command(author, version, about, long_about = None)]
     Grid(GridCommand),
+    #[command(author, version, about, long_about = None)]
+    Matcher(MatcherCommand),
     #[command(author, version, about, long_about = None)]
     Units(UnitsCommand),
 }
@@ -75,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
     match args.command {
         Commands::Scans(scan_command) => handle_scan_command(node, scan_command).await,
         Commands::Grid(grid_command) => handle_grid_command(node, grid_command).await,
+        Commands::Matcher(executor_command) => handle_matcher_command(node, executor_command).await,
         Commands::Units(units_command) => handle_units_command(node, units_command).await,
     }
 }

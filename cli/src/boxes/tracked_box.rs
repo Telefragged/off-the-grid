@@ -1,5 +1,8 @@
 use ergo_lib::ergotree_ir::chain::ergo_box::ErgoBox;
-use std::ops::Deref;
+use std::{
+    hash::{Hash, Hasher},
+    ops::Deref,
+};
 
 #[derive(Clone)]
 pub struct TrackedBox<T> {
@@ -24,5 +27,19 @@ impl<T> Deref for TrackedBox<T> {
 
     fn deref(&self) -> &Self::Target {
         &self.value
+    }
+}
+
+impl<T> PartialEq for TrackedBox<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.ergo_box.box_id() == other.ergo_box.box_id()
+    }
+}
+
+impl<T> Eq for TrackedBox<T> {}
+
+impl<T> Hash for TrackedBox<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.ergo_box.box_id().hash(state);
     }
 }
