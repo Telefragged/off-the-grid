@@ -28,7 +28,7 @@ use off_the_grid::{
     grid::grid_order::{GridOrder, GridOrderError, OrderState},
     node::client::NodeClient,
     spectrum::pool::SpectrumPool,
-    units::{Price, TokenStore, Unit},
+    units::{Price, TokenStore, Unit, UnitAmount},
 };
 use thiserror::Error;
 use tokio::try_join;
@@ -350,15 +350,24 @@ async fn handle_grid_list(
         return Ok(());
     }
 
+    let tokens = TokenStore::load(None)?;
+
     let grouped_orders = grid_orders
         .into_iter()
         .into_group_map_by(|o| o.value.metadata.clone());
+
+    let name_width = grouped_orders
+        .keys()
+        .map(|k| k.as_ref().map(|k| k.len()).unwrap_or(0))
+        .max()
+        .unwrap_or(0);
 
     for (grid_identity, orders) in grouped_orders {
         let num_buy_orders = orders
             .iter()
             .filter(|o| o.value.state == OrderState::Buy)
             .count();
+
         let num_sell_orders = orders
             .iter()
             .filter(|o| o.value.state == OrderState::Sell)
@@ -368,15 +377,45 @@ async fn handle_grid_list(
             .iter()
             .filter(|o| o.value.state == OrderState::Buy)
             .map(|o| o.value.bid())
-            .reduce(f64::max)
+            .max()
             .unwrap_or_default();
 
         let ask = orders
             .iter()
             .filter(|o| o.value.state == OrderState::Sell)
             .map(|o| o.value.ask())
-            .reduce(f64::min)
+            .min()
             .unwrap_or_default();
+
+        let profit = orders.iter().map(|o| o.value.profit()).sum::<u64>();
+
+        let total_value = orders.iter().map(|o| o.value.value.as_u64()).sum::<u64>();
+
+        let total_tokens = orders
+            .iter()
+            .filter(|o| o.value.state == OrderState::Sell)
+            .map(|o| o.value.token.amount.as_u64())
+            .sum::<u64>();
+
+        let token_id = orders
+            .iter()
+            .map(|o| o.value.token.token_id)
+            .next()
+            .unwrap();
+
+        let token_info = tokens.get_unit(&token_id);
+        let erg_info = tokens.erg_unit();
+
+        let total_value = UnitAmount::new(erg_info.clone(), total_value);
+        let total_tokens = UnitAmount::new(token_info.clone(), total_tokens);
+
+        let profit = UnitAmount::new(erg_info.clone(), profit);
+
+        let to_price = |amount: Fraction| Price::new(token_info.clone(), erg_info.clone(), amount);
+
+        let bid = to_price(bid);
+        let ask = to_price(ask);
+        let profit_in_token = ask.convert_price(&profit).unwrap();
 
         let grid_identity = if let Some(grid_identity) = grid_identity.as_ref() {
             String::from_utf8(grid_identity.clone())
@@ -385,12 +424,19 @@ async fn handle_grid_list(
             "No identity".to_string()
         };
 
-        println!("{}:", grid_identity);
-        println!("  Buy orders: {}", num_buy_orders);
-        println!("  Sell orders: {}", num_sell_orders);
-        println!("  Bid: {}", bid);
-        println!("  Ask: {}", ask);
-        println!();
+        println!(
+            "{: <9$} | {} Sell {} Buy, Bid {} Ask {}, Profit {} ({}), Total {} {}",
+            grid_identity,
+            num_sell_orders,
+            num_buy_orders,
+            bid.indirect(),
+            ask.indirect(),
+            profit,
+            profit_in_token,
+            total_value,
+            total_tokens,
+            name_width
+        );
     }
 
     Ok(())

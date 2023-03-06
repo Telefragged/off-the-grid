@@ -18,6 +18,8 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use thiserror::Error;
 
+use crate::units::Fraction;
+
 const MIN_BOX_VALUE: u64 = 1000000;
 pub const MAX_FEE: u64 = 2000000;
 
@@ -117,12 +119,22 @@ impl GridOrder {
         *self.token.amount.as_u64()
     }
 
-    pub fn bid(&self) -> f64 {
-        self.bid_value as f64 / self.order_amount() as f64
+    pub fn bid(&self) -> Fraction {
+        Fraction::new(self.bid_value, self.order_amount())
     }
 
-    pub fn ask(&self) -> f64 {
-        self.ask_value as f64 / self.order_amount() as f64
+    pub fn ask(&self) -> Fraction {
+        Fraction::new(self.ask_value, self.order_amount())
+    }
+
+    // Amount of ergs that have been collected for this order.
+    // Assumes the box was created with either MIN_BOX_VALUE or MIN_BOX_VALUE + bid_value,
+    // depending on the initial order state.
+    pub fn profit(&self) -> u64 {
+        match self.state {
+            OrderState::Sell => self.value.as_u64() - MIN_BOX_VALUE,
+            OrderState::Buy => self.value.as_u64() - MIN_BOX_VALUE - self.bid_value,
+        }
     }
 
     pub fn into_filled(self) -> Result<Self, GridOrderError> {
