@@ -1,8 +1,9 @@
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 use ergo_lib::{ergo_chain_types::Digest32, ergotree_ir::chain::token::TokenId};
 use fraction::{BigFraction, ToPrimitive};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 pub type Fraction = BigFraction;
 
@@ -57,6 +58,20 @@ impl Unit {
             }
             Unit::Unknown(_) => format!("{:.0}", amount),
         }
+    }
+
+    pub fn token_id(&self) -> TokenId {
+        match self {
+            Unit::Known(info) => info.token_id,
+            Unit::Unknown(token_id) => *token_id,
+        }
+    }
+
+    pub fn str_amount(&self, amount: &str) -> Option<UnitAmount> {
+        Fraction::from_str(amount)
+            .ok()
+            .and_then(|amount| (amount * self.base_amount()).floor().to_u64())
+            .map(|amount| UnitAmount::new(self.clone(), amount))
     }
 }
 
@@ -143,12 +158,24 @@ impl Price {
             None
         }
     }
+
+    pub fn price(&self) -> Fraction {
+        self.price.clone() * Fraction::new(self.base.base_amount(), self.quote.base_amount())
+    }
 }
 
 impl Display for Price {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.format())
     }
+}
+
+#[derive(Error, Debug)]
+pub enum TokenStoreError {
+    #[error("Failed to load token store: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("Failed to parse token store: {0}")]
+    ParseError(#[from] serde_json::Error),
 }
 
 pub struct TokenStore {
@@ -181,11 +208,23 @@ impl TokenStore {
             .unwrap_or(Unit::Unknown(*token_id))
     }
 
+    pub fn get_unit_by_id(&self, token_name: String) -> Option<Unit> {
+        self.tokens
+            .values()
+            .find(|token| token.name == token_name)
+            .map(|token| Unit::Known(token.clone()))
+            .or_else(|| {
+                Digest32::try_from(token_name)
+                    .ok()
+                    .map(|token_id| Unit::Unknown(token_id.into()))
+            })
+    }
+
     pub fn erg_unit(&self) -> Unit {
         self.get_unit(&Digest32::zero().into())
     }
 
-    pub fn save(&self, path: Option<String>) -> Result<(), std::io::Error> {
+    pub fn save(&self, path: Option<String>) -> Result<(), TokenStoreError> {
         let path = path.unwrap_or("tokens.json".to_string());
         let file = std::fs::File::create(path)?;
         let writer = std::io::BufWriter::new(file);
@@ -194,7 +233,7 @@ impl TokenStore {
         Ok(())
     }
 
-    pub fn load(path: Option<String>) -> Result<Self, std::io::Error> {
+    pub fn load(path: Option<String>) -> Result<Self, TokenStoreError> {
         let path = path.unwrap_or("tokens.json".to_string());
         let file = std::fs::File::open(path)?;
         let reader = std::io::BufReader::new(file);

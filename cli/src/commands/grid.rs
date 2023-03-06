@@ -18,7 +18,7 @@ use ergo_lib::{
         miner_fee::MINERS_FEE_ADDRESS,
     },
 };
-use fraction::{BigFraction as Fraction, ToPrimitive};
+use fraction::ToPrimitive;
 use itertools::Itertools;
 use off_the_grid::{
     boxes::{
@@ -28,11 +28,13 @@ use off_the_grid::{
     grid::grid_order::{GridOrder, GridOrderError, OrderState},
     node::client::NodeClient,
     spectrum::pool::SpectrumPool,
+    units::{Price, TokenStore, Unit},
 };
 use thiserror::Error;
 use tokio::try_join;
 
 use crate::scan_config::ScanConfig;
+use off_the_grid::units::Fraction;
 
 #[derive(Parser)]
 pub struct CreateOptions {
@@ -44,30 +46,20 @@ pub struct CreateOptions {
         help = "Total amount of tokens to be traded",
         group = "amount"
     )]
-    token_amount: Option<u64>,
-    #[clap(
-        short = 'v',
-        long,
-        help = "Total value of the grid, in nanoERGs",
-        group = "amount"
-    )]
-    total_value: Option<u64>,
+    token_amount: Option<String>,
+    #[clap(short = 'v', long, help = "Total value of the grid", group = "amount")]
+    total_value: Option<String>,
     #[clap(
         short = 'r',
         long,
-        help = "Range of the grid, in nanoERGs per token in the form lo..hi",
+        help = "Range of the grid, in the form start..stop",
         value_parser = grid_order_range_from_str
     )]
-    range: GridOrderRange,
+    range: (String, String),
     #[clap(short = 'o', long, help = "Number of orders in the grid")]
     num_orders: u64,
-    #[clap(
-        short,
-        long,
-        help = "transaction fee value, in nanoERGs",
-        default_value_t = 1000000
-    )]
-    fee: u64,
+    #[clap(short, long, help = "transaction fee value", default_value = "0.001")]
+    fee: String,
     #[clap(long, help = "Disable auto filling the grid orders")]
     no_auto_fill: bool,
     #[clap(short = 'y', help = "Submit transaction")]
@@ -124,6 +116,15 @@ pub struct GridCommand {
     command: Commands,
 }
 
+fn grid_order_range_from_str(s: &str) -> Result<(String, String), String> {
+    let parts: Vec<&str> = s.split("..").collect();
+    if let [start, stop] = parts.as_slice() {
+        Ok((start.to_string(), stop.to_string()))
+    } else {
+        Err(format!("Invalid range: {}", s))
+    }
+}
+
 async fn handle_grid_create(
     node_client: NodeClient,
     scan_config: ScanConfig,
@@ -140,15 +141,43 @@ async fn handle_grid_create(
         submit,
         grid_identity,
     } = options;
-    let fee_value: BoxValue = fee.try_into()?;
-    let token_id: TokenId = Digest32::try_from(token_id)?.into();
+
+    let token_store = TokenStore::load(None)?;
+
+    let erg_unit = token_store.erg_unit();
+
+    let unit: Unit = token_store
+        .get_unit_by_id(token_id.clone())
+        .ok_or_else(|| {
+            anyhow!(format!(
+                "{} is not a known token or a valid token ID",
+                token_id
+            ))
+        })?;
+
+    let token_id = unit.token_id();
+
+    let fee_amount = erg_unit
+        .str_amount(&fee)
+        .ok_or_else(|| anyhow!("Invalid fee value"))?;
+
+    let fee_value: BoxValue = fee_amount.amount().try_into()?;
+
     let token_per_grid = match (token_amount, total_value) {
         (Some(token_amount), None) => {
-            let tokens_per_grid = token_amount / num_orders;
+            let token_amount = unit
+                .str_amount(&token_amount)
+                .ok_or_else(|| anyhow!(format!("Invalid token amount {}", token_amount)))?;
+
+            let tokens_per_grid = token_amount.amount() / num_orders;
             Ok(OrderValueTarget::Token(tokens_per_grid.try_into()?))
         }
         (None, Some(total_value)) => {
-            let value_per_grid = total_value / num_orders;
+            let total_value = erg_unit
+                .str_amount(&total_value)
+                .ok_or_else(|| anyhow!(format!("Invalid total value {}", total_value)))?;
+
+            let value_per_grid = total_value.amount() / num_orders;
             Ok(OrderValueTarget::Value(value_per_grid.try_into()?))
         }
         _ => Err(anyhow!(
@@ -190,6 +219,21 @@ async fn handle_grid_create(
             .next()
             .ok_or(anyhow!("Failed to generate grid identity"))?
     };
+
+    let start_price: Fraction = range
+        .0
+        .parse()
+        .map_err(|_| anyhow!("Failed to parse start price {}", range.0))?;
+
+    let end_price: Fraction = range
+        .1
+        .parse()
+        .map_err(|_| anyhow!("Failed to parse end price {}", range.1))?;
+
+    let indirect_start = Price::new(unit.clone(), erg_unit.clone(), end_price).indirect();
+    let indirect_end = Price::new(unit, erg_unit, start_price).indirect();
+
+    let range = GridOrderRange::new(indirect_start.price(), indirect_end.price())?;
 
     let tx = build_new_grid_tx(
         liquidity_box,
@@ -445,32 +489,24 @@ pub enum BuildNewGridTxError {
 }
 
 #[derive(Clone, Debug)]
-pub struct GridOrderRange(u64, u64);
+pub struct GridOrderRange(Fraction, Fraction);
 
 #[derive(Error, Debug)]
 pub enum GridOrderRangeError {
-    #[error("Invalid range: lo must be less than hi")]
+    #[error("Invalid range: start and stop must be different")]
     InvalidRange,
 }
 
 impl GridOrderRange {
-    pub fn new(lo: u64, hi: u64) -> Result<Self, GridOrderRangeError> {
-        if lo < hi {
-            Ok(GridOrderRange(lo, hi))
+    pub fn new(start: Fraction, stop: Fraction) -> Result<Self, GridOrderRangeError> {
+        if start != stop {
+            Ok(GridOrderRange(
+                start.clone().min(stop.clone()),
+                start.max(stop),
+            ))
         } else {
             Err(GridOrderRangeError::InvalidRange)
         }
-    }
-}
-
-fn grid_order_range_from_str(s: &str) -> Result<GridOrderRange, String> {
-    let parts: Vec<&str> = s.split("..").collect();
-    if let [lo, hi] = parts.as_slice() {
-        let lo = lo.parse::<u64>().map_err(|e| e.to_string())?;
-        let hi = hi.parse::<u64>().map_err(|e| e.to_string())?;
-        GridOrderRange::new(lo, hi).map_err(|e| e.to_string())
-    } else {
-        Err(format!("Invalid range: {}", s))
     }
 }
 
@@ -483,7 +519,7 @@ fn fraction_to_u64(fraction: Fraction) -> Result<u64, BuildNewGridTxError> {
 fn new_orders_with_liquidity<F>(
     liquidity_provider: impl LiquidityProvider,
     num_orders: u64,
-    lo: u64,
+    lo: Fraction,
     order_step: Fraction,
     grid_identity: String,
     owner_ec_point: EcPoint,
@@ -501,8 +537,8 @@ where
     let initial_orders: Vec<_> = (0..num_orders)
         .rev()
         .map(|n| {
-            let ask = Fraction::from(lo) + &order_step * (n + 1);
-            let bid = Fraction::from(lo) + &order_step * n;
+            let ask = &lo + &order_step * (n + 1);
+            let bid = &lo + &order_step * n;
 
             let amount = grid_value_fn(bid.clone())?;
             let token: Token = (token_id, amount.try_into()?).into();
@@ -533,7 +569,7 @@ where
 
 fn new_orders<F>(
     num_orders: u64,
-    lo: u64,
+    lo: Fraction,
     order_step: Fraction,
     token_id: TokenId,
     grid_identity: String,
@@ -548,8 +584,8 @@ where
     let initial_orders: Vec<_> = (0..num_orders)
         .rev()
         .map(|n| {
-            let ask = Fraction::from(lo) + &order_step * (n + 1);
-            let bid = Fraction::from(lo) + &order_step * n;
+            let ask = &lo + &order_step * (n + 1);
+            let bid = &lo + &order_step * n;
 
             let amount = grid_value_fn(bid.clone())?;
             let token: Token = (token_id, amount.try_into()?).into();
@@ -608,7 +644,7 @@ fn build_new_grid_tx(
             }
         };
 
-    let order_step = Fraction::new(hi - lo, num_orders);
+    let order_step = (hi - lo.clone()) / num_orders;
 
     let owner_ec_point = if let Address::P2Pk(owner_dlog) = &owner_address {
         Ok(*owner_dlog.h.clone())
