@@ -1,4 +1,7 @@
-use std::iter::once;
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    iter::once,
+};
 
 use anyhow::anyhow;
 use clap::{ArgGroup, Args, Parser, Subcommand};
@@ -19,13 +22,18 @@ use ergo_lib::{
     },
 };
 use fraction::ToPrimitive;
-use itertools::Itertools;
 use off_the_grid::{
     boxes::{
         liquidity_box::{LiquidityProvider, LiquidityProviderError},
         tracked_box::TrackedBox,
     },
-    grid::grid_order::{GridOrder, GridOrderError, OrderState},
+    grid::{
+        grid_order::OrderState,
+        multigrid_order::{
+            FillMultiGridOrders, GridOrderEntries, GridOrderEntry, MultiGridOrder,
+            MultiGridOrderError,
+        },
+    },
     node::client::NodeClient,
     spectrum::pool::SpectrumPool,
     units::{Price, TokenStore, Unit, UnitAmount},
@@ -220,25 +228,24 @@ async fn handle_grid_create(
             .ok_or(anyhow!("Failed to generate grid identity"))?
     };
 
-    let start_price: Fraction = range
+    let start: Fraction = range
         .0
         .parse()
         .map_err(|_| anyhow!("Failed to parse start price {}", range.0))?;
 
-    let end_price: Fraction = range
+    let end: Fraction = range
         .1
         .parse()
         .map_err(|_| anyhow!("Failed to parse end price {}", range.1))?;
 
-    let indirect_start = Price::new(unit.clone(), erg_unit.clone(), end_price).indirect();
-    let indirect_end = Price::new(unit, erg_unit, start_price).indirect();
+    let start_price = Price::new(unit.clone(), erg_unit.clone(), start);
+    let end_price = Price::new(unit, erg_unit, end);
 
-    let range = GridOrderRange::new(indirect_start.price(), indirect_end.price())?;
+    let range = GridPriceRange::new(start_price, end_price, num_orders)?;
 
     let tx = build_new_grid_tx(
         liquidity_box,
         range,
-        num_orders,
         token_id,
         token_per_grid,
         wallet_status.change_address()?,
@@ -279,20 +286,20 @@ pub async fn handle_grid_redeem(
         .transpose()?;
 
     let grid_orders = node_client
-        .get_scan_unspent(scan_config.wallet_grid_scan_id)
+        .get_scan_unspent(scan_config.wallet_multigrid_scan_id)
         .await?
         .into_iter()
         .filter_map(|b| b.try_into().ok())
-        .filter(|b: &TrackedBox<GridOrder>| {
+        .filter(|b: &TrackedBox<MultiGridOrder>| {
             grid_identity
                 .as_ref()
                 .map(|i| b.value.metadata.as_ref().map(|m| *m == *i).unwrap_or(false))
                 .unwrap_or(true)
         })
-        .filter(|b: &TrackedBox<GridOrder>| {
+        .filter(|b: &TrackedBox<MultiGridOrder>| {
             token_id
                 .as_ref()
-                .map(|i| b.value.token.token_id == *i)
+                .map(|i| b.value.token_id == *i)
                 .unwrap_or(true)
         })
         .collect::<Vec<_>>();
@@ -304,7 +311,7 @@ pub async fn handle_grid_redeem(
     let wallet_status = node_client.wallet_status().await?;
     wallet_status.error_if_locked()?;
 
-    let tx = build_redeem_tx(
+    let tx = build_redeem_multi_tx(
         grid_orders,
         node_client.wallet_status().await?.change_address()?,
         fee.try_into()?,
@@ -333,14 +340,14 @@ async fn handle_grid_list(
         .transpose()?;
 
     let grid_orders = node_client
-        .get_scan_unspent(scan_config.wallet_grid_scan_id)
+        .get_scan_unspent(scan_config.wallet_multigrid_scan_id)
         .await?
         .into_iter()
         .filter_map(|b| b.try_into().ok())
-        .filter(|b: &TrackedBox<GridOrder>| {
+        .filter(|b: &TrackedBox<MultiGridOrder>| {
             token_id
                 .as_ref()
-                .map(|i| b.value.token.token_id == *i)
+                .map(|i| b.value.token_id == *i)
                 .unwrap_or(true)
         })
         .collect::<Vec<_>>();
@@ -352,56 +359,41 @@ async fn handle_grid_list(
 
     let tokens = TokenStore::load(None)?;
 
-    let grouped_orders = grid_orders
-        .into_iter()
-        .into_group_map_by(|o| o.value.metadata.clone());
-
-    let name_width = grouped_orders
-        .keys()
-        .map(|k| k.as_ref().map(|k| k.len()).unwrap_or(0))
+    let name_width = grid_orders
+        .iter()
+        .map(|o| o.value.metadata.as_ref().map(|m| m.len()).unwrap_or(0))
         .max()
         .unwrap_or(0);
 
-    for (grid_identity, orders) in grouped_orders {
-        let num_buy_orders = orders
+    for order in grid_orders {
+        let entries = &order.entries;
+
+        let num_buy_orders = entries
             .iter()
-            .filter(|o| o.value.state == OrderState::Buy)
+            .filter(|o| o.state == OrderState::Buy)
             .count();
 
-        let num_sell_orders = orders
+        let num_sell_orders = entries
             .iter()
-            .filter(|o| o.value.state == OrderState::Sell)
+            .filter(|o| o.state == OrderState::Sell)
             .count();
 
-        let bid = orders
-            .iter()
-            .filter(|o| o.value.state == OrderState::Buy)
-            .map(|o| o.value.bid())
-            .max()
-            .unwrap_or_default();
+        let bid = entries.bid_entry().map(|o| o.bid()).unwrap_or_default();
 
-        let ask = orders
-            .iter()
-            .filter(|o| o.value.state == OrderState::Sell)
-            .map(|o| o.value.ask())
-            .min()
-            .unwrap_or_default();
+        let ask = entries.ask_entry().map(|o| o.ask()).unwrap_or_default();
 
-        let profit = orders.iter().map(|o| o.value.profit()).sum::<u64>();
+        let profit = order.profit();
 
-        let total_value = orders.iter().map(|o| o.value.value.as_u64()).sum::<u64>();
+        let total_value = *order.value.value.as_u64();
 
-        let total_tokens = orders
-            .iter()
-            .filter(|o| o.value.state == OrderState::Sell)
-            .map(|o| o.value.token.amount.as_u64())
-            .sum::<u64>();
+        let total_tokens = order
+            .ergo_box
+            .tokens
+            .as_ref()
+            .map(|t| *t.first().amount.as_u64())
+            .unwrap_or(0);
 
-        let token_id = orders
-            .iter()
-            .map(|o| o.value.token.token_id)
-            .next()
-            .unwrap();
+        let token_id = order.token_id;
 
         let token_info = tokens.get_unit(&token_id);
         let erg_info = tokens.erg_unit();
@@ -417,7 +409,7 @@ async fn handle_grid_list(
         let ask = to_price(ask);
         let profit_in_token = ask.convert_price(&profit).unwrap();
 
-        let grid_identity = if let Some(grid_identity) = grid_identity.as_ref() {
+        let grid_identity = if let Some(grid_identity) = order.value.metadata.as_ref() {
             String::from_utf8(grid_identity.clone())
                 .unwrap_or_else(|_| format!("{:?}", grid_identity))
         } else {
@@ -455,8 +447,8 @@ pub async fn handle_grid_command(
     }
 }
 
-fn build_redeem_tx(
-    orders: Vec<TrackedBox<GridOrder>>,
+fn build_redeem_multi_tx(
+    orders: Vec<TrackedBox<MultiGridOrder>>,
     change_address: Address,
     fee_value: BoxValue,
 ) -> anyhow::Result<UnsignedTransaction> {
@@ -473,29 +465,41 @@ fn build_redeem_tx(
         .checked_sub(*fee_value.as_u64())
         .ok_or(anyhow!("Not enough funds for fee"))?;
 
-    let num_outputs = if orders.len() > 1 {
-        orders.len() as u64 - 1
+    let mut change_tokens: HashMap<TokenId, TokenAmount> = HashMap::new();
+
+    for order in orders.iter() {
+        for token in order.ergo_box.tokens.as_ref().iter().flat_map(|b| b.iter()) {
+            match change_tokens.entry(token.token_id) {
+                Entry::Occupied(mut e) => {
+                    let amount = e.get_mut();
+                    *amount = amount.checked_add(&token.amount)?;
+                }
+                Entry::Vacant(e) => {
+                    e.insert(token.amount);
+                }
+            }
+        }
+    }
+
+    let tokens = if change_tokens.is_empty() {
+        None
     } else {
-        1
+        Some(
+            change_tokens
+                .into_iter()
+                .map(Token::from)
+                .collect::<Vec<_>>()
+                .try_into()?,
+        )
     };
 
-    let mut remainder = change_value % num_outputs;
-
-    let change_outputs = (0..num_outputs).map(|_| -> anyhow::Result<_> {
-        let value = if remainder > 0 {
-            remainder -= 1;
-            change_value / num_outputs + 1
-        } else {
-            change_value / num_outputs
-        };
-        Ok(ErgoBoxCandidate {
-            value: value.try_into()?,
-            ergo_tree: change_address.script()?,
-            tokens: None,
-            additional_registers: NonMandatoryRegisters::empty(),
-            creation_height,
-        })
-    });
+    let change_candidate = ErgoBoxCandidate {
+        value: change_value.try_into()?,
+        ergo_tree: change_address.script().unwrap(),
+        tokens,
+        additional_registers: NonMandatoryRegisters::empty(),
+        creation_height,
+    };
 
     let fee_output_candidate = ErgoBoxCandidate {
         value: fee_value,
@@ -505,14 +509,12 @@ fn build_redeem_tx(
         creation_height,
     };
 
-    let inputs: Vec<_> = orders.into_iter().map(|o| o.ergo_box.into()).collect();
+    let inputs = orders.into_iter().map(|o| o.ergo_box.into()).collect();
 
     Ok(UnsignedTransaction::new_from_vec(
         inputs,
         vec![],
-        change_outputs
-            .chain(once(Ok(fee_output_candidate)))
-            .collect::<anyhow::Result<_>>()?,
+        vec![change_candidate, fee_output_candidate],
     )?)
 }
 
@@ -523,7 +525,7 @@ pub enum BuildNewGridTxError {
     #[error(transparent)]
     TokenAmount(#[from] TokenAmountError),
     #[error(transparent)]
-    GridOrder(#[from] GridOrderError),
+    MultiGridOrder(#[from] MultiGridOrderError),
     #[error(transparent)]
     BoxValue(#[from] BoxValueError),
     #[error(transparent)]
@@ -535,24 +537,71 @@ pub enum BuildNewGridTxError {
 }
 
 #[derive(Clone, Debug)]
-pub struct GridOrderRange(Fraction, Fraction);
+struct GridPriceRange {
+    start: Price,
+    stop: Price,
+    num_orders: u64,
+}
 
 #[derive(Error, Debug)]
-pub enum GridOrderRangeError {
-    #[error("Invalid range: start and stop must be different")]
+enum GridOrderRangeError {
+    #[error("Invalid range: start must be below stop")]
     InvalidRange,
 }
 
-impl GridOrderRange {
-    pub fn new(start: Fraction, stop: Fraction) -> Result<Self, GridOrderRangeError> {
-        if start != stop {
-            Ok(GridOrderRange(
-                start.clone().min(stop.clone()),
-                start.max(stop),
-            ))
-        } else {
-            Err(GridOrderRangeError::InvalidRange)
+impl GridPriceRange {
+    pub fn new(start: Price, stop: Price, num_orders: u64) -> Result<Self, GridOrderRangeError> {
+        if start.price() >= stop.price() {
+            return Err(GridOrderRangeError::InvalidRange);
         }
+
+        Ok(GridPriceRange {
+            start,
+            stop,
+            num_orders,
+        })
+    }
+}
+
+impl IntoIterator for GridPriceRange {
+    type Item = (Fraction, Fraction);
+    type IntoIter = GridPriceIterator;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let start = self.start.price();
+        let stop = self.stop.price();
+        let step = (&stop - &start) / self.num_orders;
+        GridPriceIterator {
+            base: start,
+            current: 0,
+            num_orders: self.num_orders,
+            step,
+        }
+    }
+}
+
+struct GridPriceIterator {
+    base: Fraction,
+    current: u64,
+    num_orders: u64,
+    step: Fraction,
+}
+
+impl Iterator for GridPriceIterator {
+    type Item = (Fraction, Fraction);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current >= self.num_orders {
+            return None;
+        }
+
+        let lo = &self.base + &self.step * self.current;
+        let hi = &self.base + &self.step * (self.current + 1);
+
+        self.current += 1;
+        // return the reciprocal of the fraction to get the price
+        // in the base token
+        Some((hi.recip(), lo.recip()))
     }
 }
 
@@ -562,93 +611,38 @@ fn fraction_to_u64(fraction: Fraction) -> Result<u64, BuildNewGridTxError> {
         .ok_or(BuildNewGridTxError::InvalidFraction(fraction))
 }
 
-fn new_orders_with_liquidity<F>(
-    liquidity_provider: impl LiquidityProvider,
-    num_orders: u64,
-    lo: Fraction,
-    order_step: Fraction,
-    grid_identity: String,
-    owner_ec_point: EcPoint,
-    grid_value_fn: F,
-) -> Result<(Vec<GridOrder>, impl LiquidityProvider), BuildNewGridTxError>
-where
-    F: Fn(Fraction) -> Result<u64, BuildNewGridTxError>,
-{
-    let token_id = liquidity_provider.asset_y().token_id;
-
-    let mut liquidity_state = liquidity_provider;
-
-    let grid_identity = grid_identity.into_bytes();
-
-    let initial_orders: Vec<_> = (0..num_orders)
-        .rev()
-        .map(|n| {
-            let ask = &lo + &order_step * (n + 1);
-            let bid = &lo + &order_step * n;
-
-            let amount = grid_value_fn(bid.clone())?;
-            let token: Token = (token_id, amount.try_into()?).into();
-
-            let bid_amount = fraction_to_u64((bid * amount).floor())?;
-
-            let order_state = match liquidity_state.input_amount(&token) {
-                Ok(t) if *t.amount.as_u64() <= bid_amount => {
-                    liquidity_state = liquidity_state.clone().with_swap(&t)?;
-                    OrderState::Sell
-                }
-                _ => OrderState::Buy,
-            };
-            GridOrder::new(
-                owner_ec_point.clone(),
-                bid_amount,
-                fraction_to_u64((ask * amount).ceil())?,
-                token,
-                order_state,
-                Some(grid_identity.clone()),
-            )
-            .map_err(BuildNewGridTxError::GridOrder)
-        })
-        .collect::<Result<_, _>>()?;
-
-    Ok((initial_orders, liquidity_state))
-}
-
-fn new_orders<F>(
-    num_orders: u64,
-    lo: Fraction,
-    order_step: Fraction,
+fn new_multi_orders<F>(
+    range: GridPriceRange,
     token_id: TokenId,
     grid_identity: String,
     owner_ec_point: EcPoint,
     grid_value_fn: F,
-) -> Result<Vec<GridOrder>, BuildNewGridTxError>
+) -> Result<MultiGridOrder, BuildNewGridTxError>
 where
     F: Fn(Fraction) -> Result<u64, BuildNewGridTxError>,
 {
     let grid_identity = grid_identity.into_bytes();
 
-    let initial_orders: Vec<_> = (0..num_orders)
-        .rev()
-        .map(|n| {
-            let ask = &lo + &order_step * (n + 1);
-            let bid = &lo + &order_step * n;
-
+    let initial_orders: GridOrderEntries = range
+        .into_iter()
+        .map(|(bid, ask)| {
             let amount = grid_value_fn(bid.clone())?;
-            let token: Token = (token_id, amount.try_into()?).into();
 
-            GridOrder::new(
-                owner_ec_point.clone(),
-                fraction_to_u64((bid * amount).floor())?,
-                fraction_to_u64((ask * amount).ceil())?,
-                token,
+            Result::<_, BuildNewGridTxError>::Ok(GridOrderEntry::new(
                 OrderState::Buy,
-                Some(grid_identity.clone()),
-            )
-            .map_err(BuildNewGridTxError::GridOrder)
+                amount.try_into()?,
+                fraction_to_u64((bid * amount).floor())?,
+                fraction_to_u64((ask * amount).floor())?,
+            ))
         })
         .collect::<Result<_, _>>()?;
 
-    Ok(initial_orders)
+    Ok(MultiGridOrder::new(
+        owner_ec_point,
+        token_id,
+        initial_orders,
+        Some(grid_identity),
+    )?)
 }
 
 enum OrderValueTarget {
@@ -658,10 +652,9 @@ enum OrderValueTarget {
 
 /// Build a transaction that creates a new grid of orders
 #[allow(clippy::too_many_arguments)]
-fn build_new_grid_tx(
-    liquidity_box: Option<TrackedBox<impl LiquidityProvider>>,
-    grid_range: GridOrderRange,
-    num_orders: u64,
+fn build_new_grid_tx<T: LiquidityProvider>(
+    liquidity_box: Option<TrackedBox<T>>,
+    grid_range: GridPriceRange,
     token_id: TokenId,
     order_value_target: OrderValueTarget,
     owner_address: Address,
@@ -678,8 +671,6 @@ fn build_new_grid_tx(
         .max()
         .unwrap_or(0);
 
-    let GridOrderRange(lo, hi) = grid_range;
-
     let grid_value_fn: Box<dyn Fn(Fraction) -> Result<u64, BuildNewGridTxError>> =
         match order_value_target {
             OrderValueTarget::Value(value_per_grid) => Box::new(move |bid: Fraction| {
@@ -690,8 +681,6 @@ fn build_new_grid_tx(
             }
         };
 
-    let order_step = (hi - lo.clone()) / num_orders;
-
     let owner_ec_point = if let Address::P2Pk(owner_dlog) = &owner_address {
         Ok(*owner_dlog.h.clone())
     } else {
@@ -699,35 +688,21 @@ fn build_new_grid_tx(
     }
     .unwrap();
 
-    let (initial_orders, liquidity_state) = if let Some(liquidity_box) = &liquidity_box {
-        let (initial_orders, liquidity_state) = new_orders_with_liquidity(
-            liquidity_box.value.clone(),
-            num_orders,
-            lo,
-            order_step,
-            grid_identity,
-            owner_ec_point,
-            grid_value_fn,
-        )?;
+    let initial_orders = new_multi_orders(
+        grid_range,
+        token_id,
+        grid_identity,
+        owner_ec_point,
+        grid_value_fn,
+    )?;
 
-        (initial_orders, Some(liquidity_state))
-    } else {
-        let initial_orders = new_orders(
-            num_orders,
-            lo,
-            order_step,
-            token_id,
-            grid_identity,
-            owner_ec_point,
-            grid_value_fn,
-        )?;
+    let (liquidity_state, initial_orders) = liquidity_box
+        .as_ref()
+        .map(|lb| fill_orders(lb.value.clone(), initial_orders.clone()))
+        .transpose()?
+        .unwrap_or((None, initial_orders));
 
-        (initial_orders, None)
-    };
-
-    let missing_ergs = initial_orders
-        .iter()
-        .map(|o| o.value.as_i64())
+    let missing_ergs = once(initial_orders.value.as_i64())
         .chain(once(fee_value.as_i64()))
         .chain(
             liquidity_state
@@ -741,10 +716,7 @@ fn build_new_grid_tx(
         .map(|state| state.into_box_candidate(creation_height))
         .transpose()?;
 
-    let order_outputs: Vec<_> = initial_orders
-        .into_iter()
-        .map(|o| o.into_box_candidate(creation_height))
-        .collect::<Result<_, _>>()?;
+    let order_output = initial_orders.into_box_candidate(creation_height)?;
 
     let fee_output = ErgoBoxCandidate {
         value: fee_value,
@@ -775,7 +747,7 @@ fn build_new_grid_tx(
 
     let output_candidates: Vec<ErgoBoxCandidate> = liquidity_output
         .into_iter()
-        .chain(order_outputs)
+        .chain(once(order_output))
         .chain(change_output)
         .chain(once(fee_output))
         .collect();
@@ -785,4 +757,15 @@ fn build_new_grid_tx(
         vec![],
         output_candidates,
     )?)
+}
+
+fn fill_orders<T: LiquidityProvider>(
+    liquidity_box: T,
+    order: MultiGridOrder,
+) -> Result<(Option<T>, MultiGridOrder), LiquidityProviderError> {
+    let (new_pool, filled) = liquidity_box.fill_orders(vec![&order])?;
+    match filled.into_iter().next() {
+        Some((_, filled_order)) => Ok((Some(new_pool), filled_order)),
+        None => Ok((None, order)),
+    }
 }
