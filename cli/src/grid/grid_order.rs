@@ -23,7 +23,7 @@ use crate::units::Fraction;
 const MIN_BOX_VALUE: u64 = 1000000;
 pub const MAX_FEE: u64 = 2000000;
 
-pub const GRID_ORDER_BASE16_BYTES: &[u8] = include_bytes!("../../grid_order.ergotree");
+pub const GRID_ORDER_BASE16_BYTES: &[u8] = include_bytes!("../../grid_single.ergotree");
 lazy_static! {
     /// Grid order P2S address
     pub static ref GRID_ORDER_ADDRESS: Address =
