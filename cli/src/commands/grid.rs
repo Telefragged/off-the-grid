@@ -37,6 +37,11 @@ use crate::scan_config::ScanConfig;
 use off_the_grid::units::Fraction;
 
 #[derive(Parser)]
+#[command(group(
+    ArgGroup::new("amount")
+        .required(true)
+        .args(&["token_amount", "total_value"])
+))]
 pub struct CreateOptions {
     #[clap(short = 't', long, help = "TokenID of the token to be traded")]
     token_id: String,
@@ -94,11 +99,6 @@ pub struct RedeemOptions {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    #[command(group(
-        ArgGroup::new("amount")
-            .required(true)
-            .args(&["token_amount", "total_value"])
-    ))]
     Create(CreateOptions),
     Redeem(RedeemOptions),
     List {
