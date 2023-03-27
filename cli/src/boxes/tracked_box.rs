@@ -22,6 +22,21 @@ where
     }
 }
 
+impl<T, E> TryFrom<&ErgoBox> for TrackedBox<T>
+where
+    for<'a> T: TryFrom<&'a ErgoBox, Error = E>,
+{
+    type Error = E;
+
+    fn try_from(ergo_box: &ErgoBox) -> Result<Self, Self::Error> {
+        let value = T::try_from(ergo_box)?;
+        Ok(Self {
+            ergo_box: ergo_box.clone(),
+            value,
+        })
+    }
+}
+
 impl<T> Deref for TrackedBox<T> {
     type Target = T;
 

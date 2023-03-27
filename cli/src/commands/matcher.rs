@@ -19,7 +19,11 @@ use off_the_grid::{
     node::client::NodeClient,
     spectrum::pool::SpectrumPool,
 };
-use std::{collections::HashSet, iter::once, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    iter::once,
+    time::Duration,
+};
 use tokio::try_join;
 
 pub struct BoxIdGate {
@@ -51,20 +55,23 @@ impl BoxIdGate {
     }
 }
 
-pub struct ApplyTxs<T> {
-    current_boxes: Vec<TrackedBox<T>>,
+
+pub struct MempoolOverlay {
+    spent_boxes: HashSet<BoxId>,
+    created_boxes: HashMap<BoxId, ErgoBox>,
 }
 
-impl<T> Iterator for ApplyTxs<T> {
-    type Item = TrackedBox<T>;
+impl MempoolOverlay {
+    pub fn add_transaction(&mut self, tx: Transaction) {
+        for input in tx.inputs {
+            self.spent_boxes.insert(input.box_id);
+            self.created_boxes.remove(&input.box_id);
+        }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.current_boxes.pop()
+        for ouput in tx.outputs {
+            self.created_boxes.insert(ouput.box_id(), ouput);
+        }
     }
-}
-
-trait ApplyTxsExt<T> {
-    fn apply_txs(self, txs: &[Transaction]) -> ApplyTxs<T>;
 }
 
 // Workaround for scan APIs also returning spent boxes when including mempool.
@@ -72,32 +79,74 @@ trait ApplyTxsExt<T> {
 // appear after the transaction that created their inputs. This is the case for
 // the reference node.
 // https://github.com/ergoplatform/ergo/blob/1b0d72e09ebde8460a1a2d484e85a3d7f3271590/src/main/scala/org/ergoplatform/nodeView/mempool/ErgoMemPool.scala#L80
-impl<T, E, I> ApplyTxsExt<T> for I
-where
-    for<'a> T: TryFrom<&'a ErgoBox, Error = E>,
-    I: IntoIterator<Item = TrackedBox<T>>,
-{
-    fn apply_txs(self, txs: &[Transaction]) -> ApplyTxs<T> {
-        let mut current_boxes: HashSet<_> = self.into_iter().collect();
+impl FromIterator<Transaction> for MempoolOverlay {
+    fn from_iter<I: IntoIterator<Item = Transaction>>(iter: I) -> Self {
+        let mut overlay = MempoolOverlay {
+            spent_boxes: HashSet::new(),
+            created_boxes: HashMap::new(),
+        };
 
-        for tx in txs {
-            let spent_box_ids: HashSet<_> = tx.inputs.iter().map(|input| input.box_id).collect();
-
-            let created_boxes = tx
-                .outputs
-                .iter()
-                .cloned()
-                .filter_map(|output| output.try_into().ok());
-
-            current_boxes = current_boxes
-                .into_iter()
-                .filter(|b| !spent_box_ids.contains(&b.ergo_box.box_id()))
-                .chain(created_boxes)
-                .collect();
+        for tx in iter {
+            overlay.add_transaction(tx);
         }
 
-        ApplyTxs {
-            current_boxes: current_boxes.into_iter().collect(),
+        overlay
+    }
+}
+
+pub struct MempoolOverlayIter<'a, I, J> {
+    box_iter: I,
+    overlay_created: J,
+    overlay: &'a MempoolOverlay,
+}
+
+impl<'a, T, I, J> Iterator for MempoolOverlayIter<'a, I, J>
+where
+    I: Iterator<Item = TrackedBox<T>>,
+    J: Iterator<Item = &'a ErgoBox>,
+    TrackedBox<T>: TryFrom<&'a ErgoBox>,
+{
+    type Item = TrackedBox<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(b) = self.box_iter.next() {
+                if !self.overlay.spent_boxes.contains(&b.ergo_box.box_id()) {
+                    return Some(b);
+                }
+            } else if let Some(b) = self.overlay_created.next() {
+                if let Ok(b) = b.try_into() {
+                    return Some(b);
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+}
+
+trait OverlayExt<T> {
+    fn overlay(
+        self,
+        txs: &MempoolOverlay,
+    ) -> MempoolOverlayIter<'_, Self, std::collections::hash_map::Values<'_, BoxId, ErgoBox>>
+    where
+        Self: Sized;
+}
+
+impl<T, E, I> OverlayExt<T> for I
+where
+    for<'a> T: TryFrom<&'a ErgoBox, Error = E>,
+    I: Iterator<Item = TrackedBox<T>>,
+{
+    fn overlay(
+        self,
+        overlay: &MempoolOverlay,
+    ) -> MempoolOverlayIter<'_, I, std::collections::hash_map::Values<'_, BoxId, ErgoBox>> {
+        MempoolOverlayIter {
+            box_iter: self,
+            overlay_created: overlay.created_boxes.values(),
+            overlay,
         }
     }
 }
@@ -147,16 +196,18 @@ pub async fn handle_matcher_command(
             node_client.transaction_unconfirmed_all(),
         )?;
 
+        let overlay: MempoolOverlay = mempool_txs.into_iter().collect();
+
         let grid_orders: Vec<TrackedBox<GridOrder>> = grid_orders
             .into_iter()
             .filter_map(|b| b.try_into().ok())
-            .apply_txs(&mempool_txs)
+            .overlay(&overlay)
             .collect();
 
         let n2t_pools: Vec<TrackedBox<SpectrumPool>> = n2t_pools
             .into_iter()
             .filter_map(|b| b.try_into().ok())
-            .apply_txs(&mempool_txs)
+            .overlay(&overlay)
             .collect();
 
         if box_id_gate
