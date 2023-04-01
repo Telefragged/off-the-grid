@@ -55,7 +55,6 @@ impl BoxIdGate {
     }
 }
 
-
 pub struct MempoolOverlay {
     spent_boxes: HashSet<BoxId>,
     created_boxes: HashMap<BoxId, ErgoBox>,
@@ -266,57 +265,53 @@ async fn match_orders(
 
     let surplus = input_value - output_value;
 
-    if !filled.is_empty() {
-        if surplus > MAX_FEE as i64 {
-            let creation_height = once(pool.ergo_box.creation_height)
-                .chain(filled.iter().map(|(tb, _)| tb.ergo_box.creation_height))
-                .max()
-                .unwrap_or(0);
+    if !filled.is_empty() && surplus > MAX_FEE as i64 {
+        let creation_height = once(pool.ergo_box.creation_height)
+            .chain(filled.iter().map(|(tb, _)| tb.ergo_box.creation_height))
+            .max()
+            .unwrap_or(0);
 
-            let pool_input = Input::from_unsigned_input(pool.ergo_box.into(), ProofBytes::Empty);
+        let pool_input = Input::from_unsigned_input(pool.ergo_box.into(), ProofBytes::Empty);
 
-            let pool_candidate = new_pool.into_box_candidate(creation_height)?;
+        let pool_candidate = new_pool.into_box_candidate(creation_height)?;
 
-            let (order_inputs, order_outputs): (Vec<Input>, Vec<ErgoBoxCandidate>) = filled
-                .into_iter()
-                .map(|(tb, order)| {
-                    let input = Input::from_unsigned_input(tb.ergo_box.into(), ProofBytes::Empty);
-                    (input, order.into_box_candidate(creation_height).unwrap())
-                })
-                .unzip();
+        let (order_inputs, order_outputs): (Vec<Input>, Vec<ErgoBoxCandidate>) = filled
+            .into_iter()
+            .map(|(tb, order)| {
+                let input = Input::from_unsigned_input(tb.ergo_box.into(), ProofBytes::Empty);
+                (input, order.into_box_candidate(creation_height).unwrap())
+            })
+            .unzip();
 
-            let change_candidate = ErgoBoxCandidate {
-                value: (surplus - MAX_FEE as i64).try_into()?,
-                ergo_tree: change_script.clone(),
-                tokens: None,
-                additional_registers: NonMandatoryRegisters::empty(),
-                creation_height,
-            };
+        let change_candidate = ErgoBoxCandidate {
+            value: (surplus - MAX_FEE as i64).try_into()?,
+            ergo_tree: change_script.clone(),
+            tokens: None,
+            additional_registers: NonMandatoryRegisters::empty(),
+            creation_height,
+        };
 
-            let fee_candidate = ErgoBoxCandidate {
-                value: MAX_FEE.try_into().unwrap(),
-                ergo_tree: MINERS_FEE_ADDRESS.script()?,
-                tokens: None,
-                additional_registers: NonMandatoryRegisters::empty(),
-                creation_height,
-            };
+        let fee_candidate = ErgoBoxCandidate {
+            value: MAX_FEE.try_into().unwrap(),
+            ergo_tree: MINERS_FEE_ADDRESS.script()?,
+            tokens: None,
+            additional_registers: NonMandatoryRegisters::empty(),
+            creation_height,
+        };
 
-            let tx = Transaction::new_from_vec(
-                once(pool_input).chain(order_inputs).collect(),
-                vec![],
-                once(pool_candidate)
-                    .chain(order_outputs)
-                    .chain(once(change_candidate))
-                    .chain(once(fee_candidate))
-                    .collect(),
-            )?;
+        let tx = Transaction::new_from_vec(
+            once(pool_input).chain(order_inputs).collect(),
+            vec![],
+            once(pool_candidate)
+                .chain(order_outputs)
+                .chain(once(change_candidate))
+                .chain(once(fee_candidate))
+                .collect(),
+        )?;
 
-            let tx_id = node_client.transaction_submit(&tx).await?;
+        let tx_id = node_client.transaction_submit(&tx).await?;
 
-            Ok(Some(tx_id))
-        } else {
-            Ok(None)
-        }
+        Ok(Some(tx_id))
     } else {
         Ok(None)
     }
