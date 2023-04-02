@@ -122,6 +122,10 @@ pub enum Commands {
         #[clap(short = 't', long, help = "TokenID to filter by")]
         token_id: Option<String>,
     },
+    Details {
+        #[clap(short = 'i', long, help = "Grid group identity")]
+        grid_identity: String,
+    },
 }
 
 #[derive(Args)]
@@ -441,6 +445,71 @@ async fn handle_grid_list(
     Ok(())
 }
 
+async fn handle_grid_details(
+    node_client: NodeClient,
+    scan_config: ScanConfig,
+    grid_identity: String,
+) -> Result<(), anyhow::Error> {
+    let grid_identity = grid_identity.into_bytes();
+
+    let grid_order = node_client
+        .get_scan_unspent(scan_config.wallet_multigrid_scan_id)
+        .await?
+        .into_iter()
+        .filter_map(|b| b.try_into().ok())
+        .find(|b: &TrackedBox<MultiGridOrder>| {
+            b.value
+                .metadata
+                .as_ref()
+                .map(|i| *i == *grid_identity)
+                .unwrap_or(false)
+        });
+
+    match grid_order {
+        Some(grid_order) => {
+            let tokens = TokenStore::load(None)?;
+
+            let token_id = grid_order.value.token_id;
+
+            let token_info = tokens.get_unit(&token_id);
+            let erg_info = *ERG_UNIT;
+
+            for entry in grid_order.value.entries.iter() {
+                let bid = entry.bid();
+                let ask = entry.ask();
+
+                let to_price = |amount: Fraction| Price::new(token_info, erg_info, amount);
+
+                let price = match entry.state {
+                    OrderState::Buy => bid,
+                    OrderState::Sell => ask,
+                };
+
+                let price = to_price(price);
+
+                let amount = UnitAmount::new(token_info, *entry.token_amount.as_u64());
+
+                let state_str = match entry.state {
+                    OrderState::Buy => "Buy",
+                    OrderState::Sell => "Sell",
+                };
+
+                println!(
+                    "{:>4} {:>8} @ {:>15}",
+                    state_str,
+                    amount.to_string(),
+                    price.indirect().to_string(),
+                );
+            }
+            Ok(())
+        }
+        None => {
+            println!("No grid order found");
+            Ok(())
+        }
+    }
+}
+
 pub async fn handle_grid_command(
     node_client: NodeClient,
     orders_command: GridCommand,
@@ -451,6 +520,9 @@ pub async fn handle_grid_command(
         Commands::Create(options) => handle_grid_create(node_client, scan_config, options).await,
         Commands::Redeem(options) => handle_grid_redeem(node_client, scan_config, options).await,
         Commands::List { token_id } => handle_grid_list(node_client, scan_config, token_id).await,
+        Commands::Details { grid_identity } => {
+            handle_grid_details(node_client, scan_config, grid_identity).await
+        }
     }
 }
 
