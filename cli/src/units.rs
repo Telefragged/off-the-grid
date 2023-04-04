@@ -160,7 +160,7 @@ impl Price {
     }
 
     pub fn price(&self) -> Fraction {
-        self.price.clone() * Fraction::new(self.base.base_amount(), self.quote.base_amount())
+        &self.price * Fraction::new(self.base.base_amount(), self.quote.base_amount())
     }
 }
 
