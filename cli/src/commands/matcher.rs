@@ -15,7 +15,7 @@ use ergo_lib::{
 use itertools::Itertools;
 use off_the_grid::{
     boxes::{liquidity_box::LiquidityProvider, tracked_box::TrackedBox},
-    grid::grid_order::{FillGridOrders, GridOrder, MAX_FEE},
+    grid::multigrid_order::{FillMultiGridOrders, MultiGridOrder, MAX_FEE},
     node::client::NodeClient,
     spectrum::pool::SpectrumPool,
 };
@@ -190,14 +190,14 @@ pub async fn handle_matcher_command(
 
     loop {
         let (grid_orders, n2t_pools, mempool_txs) = try_join!(
-            node_client.get_scan_unspent(scan_config.wallet_grid_scan_id),
+            node_client.get_scan_unspent(scan_config.wallet_multigrid_scan_id),
             node_client.get_scan_unspent(scan_config.n2t_scan_id),
             node_client.transaction_unconfirmed_all(),
         )?;
 
         let overlay: MempoolOverlay = mempool_txs.into_iter().collect();
 
-        let grid_orders: Vec<TrackedBox<GridOrder>> = grid_orders
+        let grid_orders: Vec<TrackedBox<MultiGridOrder>> = grid_orders
             .into_iter()
             .filter_map(|b| b.try_into().ok())
             .overlay(&overlay)
@@ -221,7 +221,7 @@ pub async fn handle_matcher_command(
         {
             let grouped_orders = grid_orders
                 .into_iter()
-                .into_group_map_by(|b| b.value.token.token_id);
+                .into_group_map_by(|b| b.value.token_id);
 
             for (token_id, orders) in grouped_orders {
                 let pool = n2t_pools
@@ -248,7 +248,7 @@ pub async fn handle_matcher_command(
 
 async fn match_orders(
     pool: TrackedBox<SpectrumPool>,
-    orders: Vec<TrackedBox<GridOrder>>,
+    orders: Vec<TrackedBox<MultiGridOrder>>,
     change_script: &ErgoTree,
     node_client: &NodeClient,
 ) -> Result<Option<TxId>, anyhow::Error> {
