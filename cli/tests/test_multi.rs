@@ -26,9 +26,8 @@ use ergo_lib::{
 };
 use lazy_static::lazy_static;
 
-use off_the_grid::grid::{
-    grid_order::OrderState,
-    multigrid_order::{GridOrderEntries, GridOrderEntry, MultiGridOrder, MAX_FEE},
+use off_the_grid::grid::multigrid_order::{
+    GridOrderEntries, GridOrderEntry, MultiGridOrder, OrderState, MAX_FEE,
 };
 
 const HEADERS_JSON: &[u8] = include_bytes!("./headers.json");

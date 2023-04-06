@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ScanConfig {
     pub n2t_scan_id: i32,
-    pub wallet_grid_scan_id: i32,
     pub wallet_multigrid_scan_id: i32,
 }
 

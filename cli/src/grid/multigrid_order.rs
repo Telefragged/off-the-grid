@@ -21,8 +21,6 @@ use thiserror::Error;
 
 use crate::units::Fraction;
 
-use super::grid_order::OrderState;
-
 const MIN_BOX_VALUE: u64 = 1000000;
 pub const MAX_FEE: u64 = 2000000;
 
@@ -84,6 +82,12 @@ pub enum MultiGridOrderError {
 
     #[error("{0} when converting number")]
     TryFromIntError(#[from] std::num::TryFromIntError),
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum OrderState {
+    Buy,
+    Sell,
 }
 
 #[derive(Clone, Copy)]

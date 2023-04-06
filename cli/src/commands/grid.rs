@@ -27,12 +27,9 @@ use off_the_grid::{
         liquidity_box::{LiquidityProvider, LiquidityProviderError},
         tracked_box::TrackedBox,
     },
-    grid::{
-        grid_order::OrderState,
-        multigrid_order::{
-            FillMultiGridOrders, GridOrderEntries, GridOrderEntry, MultiGridOrder,
-            MultiGridOrderError,
-        },
+    grid::multigrid_order::{
+        FillMultiGridOrders, GridOrderEntries, GridOrderEntry, MultiGridOrder, MultiGridOrderError,
+        OrderState,
     },
     node::client::NodeClient,
     spectrum::pool::SpectrumPool,
