@@ -240,6 +240,10 @@ impl TokenStore {
         let tokens_vec: Vec<TokenInfo> = serde_json::from_reader(reader)?;
         Ok(Self::with_tokens(tokens_vec))
     }
+
+    pub fn tokens(&self) -> impl Iterator<Item = &TokenInfo> {
+        self.tokens.values()
+    }
 }
 
 #[cfg(test)]

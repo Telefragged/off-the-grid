@@ -98,7 +98,13 @@ pub async fn handle_units_command(
             }))
             .await;
 
-            let unitsystem = TokenStore::with_tokens(responses.into_iter().flatten().collect());
+            let unitsystem = TokenStore::with_tokens(
+                responses
+                    .into_iter()
+                    .flatten()
+                    .chain(current_tokens.tokens().cloned())
+                    .collect(),
+            );
 
             unitsystem.save(None)?;
         }
