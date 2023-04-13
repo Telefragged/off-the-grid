@@ -147,7 +147,7 @@ where
                             (None, Some(ask)) => Some((state, ask)),
                             (Some(bid), None) => Some((state, bid)),
                             (Some(ask), Some(bid)) => {
-                                if ask.2 > bid.2 {
+                                if ask.3 > bid.3 {
                                     Some((state, ask))
                                 } else {
                                     Some((state, bid))
