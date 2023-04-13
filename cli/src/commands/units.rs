@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use clap::{Args, Subcommand};
+use futures::future::join_all;
 use off_the_grid::{
     boxes::tracked_box::TrackedBox,
     node::client::NodeClient,
@@ -79,7 +80,7 @@ pub async fn handle_units_command(
                 })
                 .collect::<Vec<_>>();
 
-            let responses = futures::future::join_all(urls.into_iter().map(|url| {
+            let responses = join_all(urls.into_iter().map(|url| {
                 let client = &explorer_client;
                 async move {
                     let resp = client.get(url).send().await;
