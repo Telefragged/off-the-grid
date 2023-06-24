@@ -46,19 +46,165 @@ pub trait LiquidityProvider: Sized + Clone {
     fn asset_y(&self) -> &Token;
 }
 
-pub enum OrderMatchingState {
+/// The state of the order matching process for a specific multi-grid order
+/// This is needed since the order matching process can only occur in one direction
+enum OrderMatchingState {
+    /// The order has not been matched yet, meaning that the bid and ask are still available
     NotMatched(GridOrderEntries),
+    /// The bid has been matched, meaning that the order can only be filled by more buys
     MatchedBid(GridOrderEntries),
+    /// The ask has been matched, meaning that the order can only be filled by more sells
     MatchedAsk(GridOrderEntries),
 }
 
 impl OrderMatchingState {
-    fn entries_mut(&mut self) -> &mut GridOrderEntries {
+    fn fill_bid(&mut self) {
         match self {
-            OrderMatchingState::NotMatched(entries) => entries,
-            OrderMatchingState::MatchedBid(entries) => entries,
-            OrderMatchingState::MatchedAsk(entries) => entries,
+            OrderMatchingState::NotMatched(entries) => {
+                entries.bid_entry_mut().unwrap().state = OrderState::Sell;
+                *self = OrderMatchingState::MatchedBid(entries.clone());
+            }
+            OrderMatchingState::MatchedBid(entries) => {
+                entries.bid_entry_mut().unwrap().state = OrderState::Sell;
+            }
+            OrderMatchingState::MatchedAsk(_) => {
+                panic!("Cannot fill bid when ask is already filled");
+            }
         }
+    }
+
+    fn fill_ask(&mut self) {
+        match self {
+            OrderMatchingState::NotMatched(entries) => {
+                entries.ask_entry_mut().unwrap().state = OrderState::Buy;
+                *self = OrderMatchingState::MatchedAsk(entries.clone());
+            }
+            OrderMatchingState::MatchedBid(_) => {
+                panic!("Cannot fill ask when bid is already filled");
+            }
+            OrderMatchingState::MatchedAsk(entries) => {
+                entries.ask_entry_mut().unwrap().state = OrderState::Buy;
+            }
+        }
+    }
+
+    fn state_surplus<T>(
+        &self,
+        liquidity_provider: &T,
+        cur_x: i64,
+        cur_y: i64,
+    ) -> Option<SurplusResult>
+    where
+        T: LiquidityProvider,
+    {
+        match self {
+            OrderMatchingState::NotMatched(entries) => {
+                let bid_surplus = entries
+                    .bid_entry()
+                    .and_then(|entry| calculate_surplus(liquidity_provider, entry, cur_x, cur_y));
+
+                let ask_surplus = entries
+                    .ask_entry()
+                    .and_then(|entry| calculate_surplus(liquidity_provider, entry, cur_x, cur_y));
+
+                match (bid_surplus, ask_surplus) {
+                    (None, None) => None,
+                    (None, Some(ask)) => Some(ask),
+                    (Some(bid), None) => Some(bid),
+                    (Some(ask), Some(bid)) => {
+                        if ask.surplus > bid.surplus {
+                            Some(ask)
+                        } else {
+                            Some(bid)
+                        }
+                    }
+                }
+            }
+            OrderMatchingState::MatchedBid(entries) => entries
+                .bid_entry()
+                .and_then(|entry| calculate_surplus(liquidity_provider, entry, cur_x, cur_y)),
+            OrderMatchingState::MatchedAsk(entries) => entries
+                .ask_entry()
+                .and_then(|entry| calculate_surplus(liquidity_provider, entry, cur_x, cur_y)),
+        }
+    }
+}
+
+struct SurplusResult {
+    updater: fn(&mut OrderMatchingState),
+    new_x: i64,
+    new_y: i64,
+    surplus: i64,
+}
+
+impl SurplusResult {
+    fn new(
+        updater: fn(&mut OrderMatchingState),
+        new_x: i64,
+        new_y: i64,
+        surplus: i64,
+    ) -> SurplusResult {
+        SurplusResult {
+            updater,
+            new_x,
+            new_y,
+            surplus,
+        }
+    }
+}
+
+fn calculate_surplus<T>(
+    liquidity_provider: &T,
+    entry: &GridOrderEntry,
+    cur_x: i64,
+    cur_y: i64,
+) -> Option<SurplusResult>
+where
+    T: LiquidityProvider,
+{
+    let (new_x, new_y, updater) = match entry.state {
+        OrderState::Buy => (
+            cur_x + entry.bid_value as i64,
+            cur_y - *entry.token_amount.as_u64() as i64,
+            OrderMatchingState::fill_bid as fn(&mut OrderMatchingState),
+        ),
+        OrderState::Sell => (
+            cur_x - entry.ask_value as i64,
+            cur_y + *entry.token_amount.as_u64() as i64,
+            OrderMatchingState::fill_ask as fn(&mut OrderMatchingState),
+        ),
+    };
+
+    match new_y.cmp(&0) {
+        Ordering::Greater => {
+            let input = (
+                liquidity_provider.asset_y().token_id,
+                (new_y as u64).try_into().expect("non-zero"),
+            )
+                .into();
+            if let Ok(output) = liquidity_provider.output_amount(&input) {
+                let surplus = new_x + *output.amount.as_u64() as i64;
+
+                Some(SurplusResult::new(updater, new_x, new_y, surplus))
+            } else {
+                None
+            }
+        }
+        Ordering::Less => {
+            let output = (
+                liquidity_provider.asset_y().token_id,
+                new_y.unsigned_abs().try_into().expect("non-zero"),
+            )
+                .into();
+            if let Ok(input) = liquidity_provider.input_amount(&output) {
+                let surplus = new_x - *input.amount.as_u64() as i64;
+
+                Some(SurplusResult::new(updater, new_x, new_y, surplus))
+            } else {
+                None
+            }
+        }
+        Ordering::Equal => Some(SurplusResult::new(updater, new_x, new_y, new_x)),
     }
 }
 
@@ -87,109 +233,23 @@ where
         let mut liquidity_y_diff = 0i64;
         let mut current_surplus = 0i64;
 
-        let calculate_surplus = |entry: GridOrderEntry, cur_x: i64, cur_y: i64| {
-            let (new_x, new_y) = match entry.state {
-                OrderState::Buy => (
-                    cur_x + entry.bid_value as i64,
-                    cur_y - *entry.token_amount.as_u64() as i64,
-                ),
-                OrderState::Sell => (
-                    cur_x - entry.ask_value as i64,
-                    cur_y + *entry.token_amount.as_u64() as i64,
-                ),
-            };
-
-            match new_y.cmp(&0) {
-                Ordering::Greater => {
-                    let input =
-                        (self.asset_y().token_id, (new_y as u64).try_into().unwrap()).into();
-                    if let Ok(output) = self.output_amount(&input) {
-                        let surplus = new_x + *output.amount.as_u64() as i64;
-
-                        Some((entry.state, new_x, new_y, surplus))
-                    } else {
-                        None
-                    }
-                }
-                Ordering::Less => {
-                    let output = (
-                        self.asset_y().token_id,
-                        new_y.unsigned_abs().try_into().unwrap(),
-                    )
-                        .into();
-                    if let Ok(input) = self.input_amount(&output) {
-                        let surplus = new_x - *input.amount.as_u64() as i64;
-
-                        Some((entry.state, new_x, new_y, surplus))
-                    } else {
-                        None
-                    }
-                }
-                Ordering::Equal => Some((entry.state, new_x, new_y, new_x)),
-            }
-        };
-
         loop {
             let best_order = orders
                 .iter_mut()
-                .filter_map(|(_, state)| match state {
-                    OrderMatchingState::NotMatched(entries) => {
-                        let bid_surplus = entries.bid_entry_mut().copied().and_then(|entry| {
-                            calculate_surplus(entry, liquidity_x_diff, liquidity_y_diff)
-                        });
-
-                        let ask_surplus = entries.ask_entry_mut().copied().and_then(|entry| {
-                            calculate_surplus(entry, liquidity_x_diff, liquidity_y_diff)
-                        });
-
-                        match (bid_surplus, ask_surplus) {
-                            (None, None) => None,
-                            (None, Some(ask)) => Some((state, ask)),
-                            (Some(bid), None) => Some((state, bid)),
-                            (Some(ask), Some(bid)) => {
-                                if ask.3 > bid.3 {
-                                    Some((state, ask))
-                                } else {
-                                    Some((state, bid))
-                                }
-                            }
-                        }
-                    }
-                    OrderMatchingState::MatchedBid(entries) => entries
-                        .bid_entry_mut()
-                        .copied()
-                        .and_then(|entry| {
-                            calculate_surplus(entry, liquidity_x_diff, liquidity_y_diff)
-                        })
-                        .map(|bid| (state, bid)),
-                    OrderMatchingState::MatchedAsk(entries) => entries
-                        .ask_entry_mut()
-                        .copied()
-                        .and_then(|entry| {
-                            calculate_surplus(entry, liquidity_x_diff, liquidity_y_diff)
-                        })
-                        .map(|ask| (state, ask)),
+                .filter_map(|(_, state)| {
+                    state
+                        .state_surplus(&self, liquidity_x_diff, liquidity_y_diff)
+                        .map(|surplus_result| (state, surplus_result))
                 })
-                .max_by_key(|(_, (_, _, _, surplus))| *surplus);
+                .max_by_key(|(_, surplus_result)| surplus_result.surplus);
 
             match best_order {
-                Some((state, (order_state, new_x, new_y, surplus)))
-                    if surplus > current_surplus =>
-                {
-                    liquidity_x_diff = new_x;
-                    liquidity_y_diff = new_y;
-                    current_surplus = surplus;
+                Some((state, surplus_result)) if surplus_result.surplus > current_surplus => {
+                    liquidity_x_diff = surplus_result.new_x;
+                    liquidity_y_diff = surplus_result.new_y;
+                    current_surplus = surplus_result.surplus;
 
-                    match order_state {
-                        OrderState::Buy => {
-                            state.entries_mut().bid_entry_mut().unwrap().state = OrderState::Sell;
-                            *state = OrderMatchingState::MatchedBid(state.entries_mut().clone());
-                        }
-                        OrderState::Sell => {
-                            state.entries_mut().ask_entry_mut().unwrap().state = OrderState::Buy;
-                            *state = OrderMatchingState::MatchedAsk(state.entries_mut().clone());
-                        }
-                    }
+                    (surplus_result.updater)(state);
                 }
                 _ => break,
             }
@@ -212,7 +272,7 @@ where
             Ordering::Greater => {
                 let input = (
                     self.asset_y().token_id,
-                    (liquidity_y_diff as u64).try_into().unwrap(),
+                    (liquidity_y_diff as u64).try_into().expect("non-zero"),
                 )
                     .into();
 
@@ -222,7 +282,10 @@ where
             Ordering::Less => {
                 let output = (
                     self.asset_y().token_id,
-                    liquidity_y_diff.unsigned_abs().try_into().unwrap(),
+                    liquidity_y_diff
+                        .unsigned_abs()
+                        .try_into()
+                        .expect("non-zero"),
                 )
                     .into();
 
