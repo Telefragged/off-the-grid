@@ -153,12 +153,7 @@ async fn handle_grid_create(
 
     let unit: Unit = token_store
         .get_unit_by_id(token_id.clone())
-        .ok_or_else(|| {
-            anyhow!(format!(
-                "{} is not a known token or a valid token ID",
-                token_id
-            ))
-        })?;
+        .ok_or_else(|| anyhow!("{} is not a known token or a valid token ID", token_id))?;
 
     let token_id = unit.token_id();
 
@@ -172,7 +167,7 @@ async fn handle_grid_create(
         (Some(token_amount), None) => {
             let token_amount = unit
                 .str_amount(&token_amount)
-                .ok_or_else(|| anyhow!(format!("Invalid token amount {}", token_amount)))?;
+                .ok_or_else(|| anyhow!("Invalid token amount {}", token_amount))?;
 
             let tokens_per_grid = token_amount.amount() / num_orders;
             Ok(OrderValueTarget::Token(tokens_per_grid.try_into()?))
@@ -180,7 +175,7 @@ async fn handle_grid_create(
         (None, Some(total_value)) => {
             let total_value = erg_unit
                 .str_amount(&total_value)
-                .ok_or_else(|| anyhow!(format!("Invalid total value {}", total_value)))?;
+                .ok_or_else(|| anyhow!("Invalid total value {}", total_value))?;
 
             let value_per_grid = total_value.amount() / num_orders;
             Ok(OrderValueTarget::Value(value_per_grid.try_into()?))
