@@ -17,7 +17,7 @@ use ergo_lib::{
         token::{Token, TokenAmount, TokenAmountError, TokenId},
     },
     wallet::{
-        box_selector::{BoxSelector, BoxSelectorError, SimpleBoxSelector},
+        box_selector::{BoxSelection, BoxSelector, BoxSelectorError, SimpleBoxSelector},
         miner_fee::MINERS_FEE_ADDRESS,
     },
 };
@@ -235,7 +235,7 @@ async fn handle_grid_create(
 
     let range = GridPriceRange::new(start_price, end_price, num_orders)?;
 
-    let tx = build_new_grid_tx(
+    let grid_tx_data = build_new_grid_data(
         liquidity_box,
         range,
         token_id,
@@ -245,6 +245,8 @@ async fn handle_grid_create(
         wallet_boxes,
         grid_identity,
     )?;
+
+    let tx = grid_tx_data.try_into()?;
 
     let signed = node_client.wallet_transaction_sign(&tx).await?;
 
@@ -603,7 +605,7 @@ fn fraction_to_u64(fraction: Fraction) -> Result<u64, BuildNewGridTxError> {
         .ok_or(BuildNewGridTxError::InvalidFraction(fraction))
 }
 
-fn new_multi_orders<F>(
+fn new_multi_order<F>(
     range: GridPriceRange,
     token_id: TokenId,
     grid_identity: String,
@@ -642,9 +644,111 @@ enum OrderValueTarget {
     Token(TokenAmount),
 }
 
+enum LiquidityData<T: LiquidityProvider> {
+    WithLiquidity { input: TrackedBox<T>, output: T },
+    WithoutLiquidity,
+}
+
+impl<T> LiquidityData<T>
+where
+    T: LiquidityProvider,
+{
+    pub fn creation_height(&self) -> u32 {
+        match self {
+            LiquidityData::WithLiquidity { input, output: _ } => input.ergo_box.creation_height,
+            LiquidityData::WithoutLiquidity => 0,
+        }
+    }
+}
+
+struct NewGridTxData<T: LiquidityProvider> {
+    owner_address: Address,
+    liquidity_data: LiquidityData<T>,
+    wallet_box_selection: BoxSelection<ErgoBox>,
+    grid_output: MultiGridOrder,
+    fee_value: BoxValue,
+}
+
+impl<T> TryFrom<NewGridTxData<T>> for UnsignedTransaction
+where
+    T: LiquidityProvider,
+{
+    type Error = BuildNewGridTxError;
+
+    fn try_from(value: NewGridTxData<T>) -> Result<Self, Self::Error> {
+        let creation_height = value
+            .wallet_box_selection
+            .boxes
+            .iter()
+            .map(|input| input.creation_height)
+            .max()
+            .unwrap_or_else(|| value.liquidity_data.creation_height());
+
+        let (liquidity_input, liquidity_output) = match value.liquidity_data {
+            LiquidityData::WithLiquidity {
+                input: liquidity_box_input,
+                output,
+            } => {
+                let input = liquidity_box_input.ergo_box.into();
+
+                let output_candidate = output.into_box_candidate(creation_height)?;
+
+                (Some(input), Some(output_candidate))
+            }
+            LiquidityData::WithoutLiquidity => (None, None),
+        };
+
+        let inputs: Vec<UnsignedInput> = value
+            .wallet_box_selection
+            .boxes
+            .into_iter()
+            .map(|input| input.into())
+            .chain(liquidity_input)
+            .collect();
+
+        let grid_output = value.grid_output.into_box_candidate(creation_height)?;
+
+        let change_outputs = value
+            .wallet_box_selection
+            .change_boxes
+            .into_iter()
+            .map(|assets| ErgoBoxCandidate {
+                value: assets.value,
+                ergo_tree: value
+                    .owner_address
+                    .script()
+                    .expect("Address was already parsed"),
+                tokens: assets.tokens,
+                additional_registers: NonMandatoryRegisters::empty(),
+                creation_height,
+            });
+
+        let fee_output = ErgoBoxCandidate {
+            value: value.fee_value,
+            ergo_tree: MINERS_FEE_ADDRESS.script().unwrap(),
+            tokens: None,
+            additional_registers: NonMandatoryRegisters::empty(),
+            creation_height,
+        };
+
+        let output_candidates: Vec<ErgoBoxCandidate> = liquidity_output
+            .into_iter()
+            .chain(once(grid_output))
+            .chain(change_outputs)
+            .chain(once(fee_output))
+            .collect();
+
+        Ok(UnsignedTransaction::new_from_vec(
+            inputs,
+            vec![],
+            output_candidates,
+        )?)
+    }
+}
+
 /// Build a transaction that creates a new grid of orders
 #[allow(clippy::too_many_arguments)]
-fn build_new_grid_tx<T: LiquidityProvider>(
+fn build_new_grid_data<T: LiquidityProvider>(
     liquidity_box: Option<TrackedBox<T>>,
     grid_range: GridPriceRange,
     token_id: TokenId,
@@ -653,16 +757,7 @@ fn build_new_grid_tx<T: LiquidityProvider>(
     fee_value: BoxValue,
     wallet_boxes: Vec<ErgoBox>,
     grid_identity: String,
-) -> Result<UnsignedTransaction, BuildNewGridTxError> {
-    let creation_height = liquidity_box
-        .as_ref()
-        .map(|lb| &lb.ergo_box)
-        .into_iter()
-        .chain(wallet_boxes.iter())
-        .map(|b| b.creation_height)
-        .max()
-        .unwrap_or(0);
-
+) -> Result<NewGridTxData<T>, BuildNewGridTxError> {
     let grid_value_fn: Box<dyn Fn(Fraction) -> Result<u64, BuildNewGridTxError>> =
         match order_value_target {
             OrderValueTarget::Value(value_per_grid) => Box::new(move |bid: Fraction| {
@@ -680,7 +775,7 @@ fn build_new_grid_tx<T: LiquidityProvider>(
     }
     .unwrap();
 
-    let initial_orders = new_multi_orders(
+    let initial_order = new_multi_order(
         grid_range,
         token_id,
         grid_identity,
@@ -688,11 +783,15 @@ fn build_new_grid_tx<T: LiquidityProvider>(
         grid_value_fn,
     )?;
 
-    let (liquidity_state, initial_orders) = liquidity_box
-        .as_ref()
-        .map(|lb| fill_orders(lb.value.clone(), initial_orders.clone()))
-        .transpose()?
-        .unwrap_or((None, initial_orders));
+    let (liquidity_state, initial_orders) = match liquidity_box.as_ref() {
+        Some(liquidity_box) => {
+            let (liquidity_state, initial_orders) =
+                fill_orders(liquidity_box.value.clone(), initial_order)?;
+
+            (liquidity_state, initial_orders)
+        }
+        None => (None, initial_order),
+    };
 
     let missing_ergs = once(initial_orders.value.as_i64())
         .chain(once(fee_value.as_i64()))
@@ -704,51 +803,23 @@ fn build_new_grid_tx<T: LiquidityProvider>(
         .chain(liquidity_box.iter().map(|lb| -lb.ergo_box.value.as_i64()))
         .sum::<i64>();
 
-    let liquidity_output = liquidity_state
-        .map(|state| state.into_box_candidate(creation_height))
-        .transpose()?;
-
-    let order_output = initial_orders.into_box_candidate(creation_height)?;
-
-    let fee_output = ErgoBoxCandidate {
-        value: fee_value,
-        ergo_tree: MINERS_FEE_ADDRESS.script().unwrap(),
-        tokens: None,
-        additional_registers: NonMandatoryRegisters::empty(),
-        creation_height,
-    };
-
     let selection = SimpleBoxSelector::new().select(wallet_boxes, missing_ergs.try_into()?, &[])?;
 
-    let inputs: Vec<UnsignedInput> = liquidity_box
-        .map(|lb| lb.ergo_box.into())
-        .into_iter()
-        .chain(selection.boxes.into_iter().map(|b| b.into()))
-        .collect();
+    let liquidity_data = liquidity_box
+        .zip(liquidity_state)
+        .map(|(lb, s)| LiquidityData::WithLiquidity {
+            input: lb,
+            output: s,
+        })
+        .unwrap_or(LiquidityData::WithoutLiquidity);
 
-    let change_output = selection
-        .change_boxes
-        .into_iter()
-        .map(|assets| ErgoBoxCandidate {
-            value: assets.value,
-            ergo_tree: owner_address.script().unwrap(),
-            tokens: assets.tokens,
-            additional_registers: NonMandatoryRegisters::empty(),
-            creation_height,
-        });
-
-    let output_candidates: Vec<ErgoBoxCandidate> = liquidity_output
-        .into_iter()
-        .chain(once(order_output))
-        .chain(change_output)
-        .chain(once(fee_output))
-        .collect();
-
-    Ok(UnsignedTransaction::new_from_vec(
-        inputs,
-        vec![],
-        output_candidates,
-    )?)
+    Ok(NewGridTxData {
+        liquidity_data,
+        grid_output: initial_orders,
+        wallet_box_selection: selection,
+        fee_value,
+        owner_address,
+    })
 }
 
 fn fill_orders<T: LiquidityProvider>(
