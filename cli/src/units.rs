@@ -103,6 +103,10 @@ impl UnitAmount {
         self.amount
     }
 
+    pub fn fraction(&self) -> Fraction {
+        Fraction::new(self.amount, self.unit.base_amount())
+    }
+
     pub fn format(&self) -> String {
         self.unit
             .format(Fraction::new(self.amount, self.unit.base_amount()))
@@ -111,7 +115,21 @@ impl UnitAmount {
 
 impl Display for UnitAmount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.format())
+        let precision = f.precision().unwrap_or(self.unit.decimals() as usize);
+
+        let fraction_str = format!("{:.1$}", self.fraction(), precision);
+
+        f.pad_integral(true, "", &fraction_str)?;
+
+        match (f.alternate(), self.unit()) {
+            (false, Unit::Known(info)) => {
+                write!(f, " {}", info.name)
+            }
+            (false, Unit::Unknown(token_id)) => {
+                write!(f, " {:?}", token_id)
+            }
+            _ => Ok(()),
+        }
     }
 }
 

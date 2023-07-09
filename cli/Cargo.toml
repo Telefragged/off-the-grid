@@ -23,6 +23,8 @@ names = { version = "0.14.0", default-features = false }
 itertools = "0.10.5"
 fraction = { version = "0.13.1", default-features = false, features = ["with-bigint"] }
 futures = "0.3.26"
+tabled = { version = "0.12.2", features = ["color", "std"] }
+colored = "2.0.4"
 
 [dev-dependencies]
 proptest = "1.1.0"
