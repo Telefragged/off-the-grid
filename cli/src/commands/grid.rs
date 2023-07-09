@@ -33,7 +33,7 @@ use off_the_grid::{
     },
     node::client::NodeClient,
     spectrum::pool::SpectrumPool,
-    units::{Price, TokenStore, Unit, UnitAmount},
+    units::{Price, TokenStore, Unit, UnitAmount, ERG_UNIT},
 };
 use thiserror::Error;
 use tokio::try_join;
@@ -149,7 +149,7 @@ async fn handle_grid_create(
 
     let token_store = TokenStore::load(None)?;
 
-    let erg_unit = token_store.erg_unit();
+    let erg_unit = ERG_UNIT.clone();
 
     let unit: Unit = token_store
         .get_unit_by_id(token_id.clone())
@@ -390,7 +390,7 @@ async fn handle_grid_list(
         let token_id = order.token_id;
 
         let token_info = tokens.get_unit(&token_id);
-        let erg_info = tokens.erg_unit();
+        let erg_info = ERG_UNIT.clone();
 
         let total_value = UnitAmount::new(erg_info.clone(), total_value);
         let total_tokens = UnitAmount::new(token_info.clone(), total_tokens);

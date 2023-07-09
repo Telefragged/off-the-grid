@@ -2,6 +2,7 @@ use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 use ergo_lib::{ergo_chain_types::Digest32, ergotree_ir::chain::token::TokenId};
 use fraction::{BigFraction, ToPrimitive};
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -73,6 +74,14 @@ impl Unit {
             .and_then(|amount| (amount * self.base_amount()).floor().to_u64())
             .map(|amount| UnitAmount::new(self.clone(), amount))
     }
+}
+
+lazy_static! {
+    pub static ref ERG_UNIT: Unit = Unit::Known(TokenInfo {
+        token_id: Digest32::zero().into(),
+        name: "ERG".to_string(),
+        decimals: 9,
+    });
 }
 
 #[derive(Clone, Debug)]
@@ -218,10 +227,6 @@ impl TokenStore {
                     .ok()
                     .map(|token_id| Unit::Unknown(token_id.into()))
             })
-    }
-
-    pub fn erg_unit(&self) -> Unit {
-        self.get_unit(&Digest32::zero().into())
     }
 
     pub fn save(&self, path: Option<String>) -> Result<(), TokenStoreError> {
