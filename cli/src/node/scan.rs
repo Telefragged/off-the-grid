@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::node::client::NodeClient;
 
-use super::{client::ErgoNodeError, wallet::WalletBox};
+use super::{client::ErgoNodeError, wallet::ApiWalletBox};
 
 fn encode_base16<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -82,7 +82,7 @@ pub struct CreateScanResponse {
 impl NodeClient {
     pub async fn get_scan_unspent(&self, scan_id: i32) -> Result<Vec<ErgoBox>, ErgoNodeError> {
         let path = format!("scan/unspentBoxes/{scan_id}");
-        let result: Vec<WalletBox> = self.request_get(&path).await?;
+        let result: Vec<ApiWalletBox> = self.request_get(&path).await?;
         Ok(result.into_iter().map(|wb| wb.ergo_box).collect())
     }
 

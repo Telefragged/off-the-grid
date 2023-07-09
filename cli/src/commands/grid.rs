@@ -17,7 +17,7 @@ use ergo_lib::{
         token::{Token, TokenAmount, TokenAmountError, TokenId},
     },
     wallet::{
-        box_selector::{BoxSelection, BoxSelector, BoxSelectorError, SimpleBoxSelector},
+        box_selector::{BoxSelector, BoxSelectorError, SimpleBoxSelector, ErgoBoxAssetsData},
         miner_fee::MINERS_FEE_ADDRESS,
     },
 };
@@ -26,6 +26,7 @@ use off_the_grid::{
     boxes::{
         liquidity_box::{LiquidityProvider, LiquidityProviderError},
         tracked_box::TrackedBox,
+        wallet_box::WalletBox,
     },
     grid::multigrid_order::{
         FillMultiGridOrders, GridOrderEntries, GridOrderEntry, MultiGridOrder, MultiGridOrderError,
@@ -664,7 +665,8 @@ where
 struct NewGridTxData<T: LiquidityProvider> {
     owner_address: Address,
     liquidity_data: LiquidityData<T>,
-    wallet_box_selection: BoxSelection<ErgoBox>,
+    selected_boxes: Vec<WalletBox<ErgoBox>>,
+    change_boxes: Vec<WalletBox<ErgoBoxAssetsData>>,
     grid_output: MultiGridOrder,
     fee_value: BoxValue,
 }
@@ -677,10 +679,9 @@ where
 
     fn try_from(value: NewGridTxData<T>) -> Result<Self, Self::Error> {
         let creation_height = value
-            .wallet_box_selection
-            .boxes
+            .selected_boxes
             .iter()
-            .map(|input| input.creation_height)
+            .map(|input| input.0.creation_height)
             .max()
             .unwrap_or_else(|| value.liquidity_data.creation_height());
 
@@ -699,26 +700,24 @@ where
         };
 
         let inputs: Vec<UnsignedInput> = value
-            .wallet_box_selection
-            .boxes
+            .selected_boxes
             .into_iter()
-            .map(|input| input.into())
+            .map(|input| input.into_inner().into())
             .chain(liquidity_input)
             .collect();
 
         let grid_output = value.grid_output.into_box_candidate(creation_height)?;
 
         let change_outputs = value
-            .wallet_box_selection
             .change_boxes
             .into_iter()
             .map(|assets| ErgoBoxCandidate {
-                value: assets.value,
+                value: assets.0.value,
                 ergo_tree: value
                     .owner_address
                     .script()
                     .expect("Address was already parsed"),
-                tokens: assets.tokens,
+                tokens: assets.0.tokens,
                 additional_registers: NonMandatoryRegisters::empty(),
                 creation_height,
             });
@@ -755,7 +754,7 @@ fn build_new_grid_data<T: LiquidityProvider>(
     order_value_target: OrderValueTarget,
     owner_address: Address,
     fee_value: BoxValue,
-    wallet_boxes: Vec<ErgoBox>,
+    wallet_boxes: Vec<WalletBox<ErgoBox>>,
     grid_identity: String,
 ) -> Result<NewGridTxData<T>, BuildNewGridTxError> {
     let grid_value_fn: Box<dyn Fn(Fraction) -> Result<u64, BuildNewGridTxError>> =
@@ -813,10 +812,16 @@ fn build_new_grid_data<T: LiquidityProvider>(
         })
         .unwrap_or(LiquidityData::WithoutLiquidity);
 
+    let change_boxes = selection
+        .change_boxes
+        .into_iter()
+        .map(WalletBox::new)
+        .collect();
     Ok(NewGridTxData {
         liquidity_data,
         grid_output: initial_orders,
-        wallet_box_selection: selection,
+        selected_boxes: selection.boxes.into(),
+        change_boxes,
         fee_value,
         owner_address,
     })

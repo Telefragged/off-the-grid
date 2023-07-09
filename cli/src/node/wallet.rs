@@ -8,12 +8,13 @@ use ergo_lib::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::boxes::wallet_box::WalletBox;
 use crate::node::client::NodeClient;
 
 use super::client::ErgoNodeError;
 
 #[derive(Deserialize, Debug)]
-pub(super) struct WalletBox {
+pub(super) struct ApiWalletBox {
     #[serde(rename = "box")]
     pub ergo_box: ErgoBox,
 }
@@ -69,12 +70,15 @@ impl WalletStatus {
 }
 
 impl NodeClient {
-    pub async fn wallet_boxes_unspent(&self) -> Result<Vec<ErgoBox>, ErgoNodeError> {
+    pub async fn wallet_boxes_unspent(&self) -> Result<Vec<WalletBox<ErgoBox>>, ErgoNodeError> {
         let path = "wallet/boxes/unspent";
 
-        let boxes: Vec<WalletBox> = self.request_get(path).await?;
+        let boxes: Vec<ApiWalletBox> = self.request_get(path).await?;
 
-        Ok(boxes.into_iter().map(|wb| wb.ergo_box).collect())
+        Ok(boxes
+            .into_iter()
+            .map(|wb| WalletBox::new(wb.ergo_box))
+            .collect())
     }
 
     pub async fn wallet_transaction_sign(
