@@ -36,11 +36,10 @@ lazy_static! {
         TokenId::from(Digest32::zero());
 
     pub static ref N2T_POOL_ADDRESS: Address =
-        #[allow(clippy::unwrap_used)]
-        Address::P2S(base16::decode(N2T_POOL_ERGO_TREE_BASE16).unwrap());
+        Address::P2S(base16::decode(N2T_POOL_ERGO_TREE_BASE16).expect("String is a valid base16"));
 
     pub static ref N2T_POOL_SCRIPT: ErgoTree =
-        N2T_POOL_ADDRESS.script().unwrap();
+        N2T_POOL_ADDRESS.script().expect("Pool address is a valid script");
 }
 
 #[derive(Clone)]
@@ -235,8 +234,7 @@ impl LiquidityProvider for SpectrumPool {
         let tokens = Some(
             vec![self.pool_nft, self.asset_lp, self.asset_y]
                 .try_into()
-                // Safe to unwrap because we know the vector has 3 elements
-                .unwrap(),
+                .expect("Token BoundedVec requires >1 tokens"),
         );
 
         let value = (*self.asset_x.amount.as_u64()).try_into()?;
@@ -249,9 +247,8 @@ impl LiquidityProvider for SpectrumPool {
             value,
             ergo_tree,
             tokens,
-            // Safe to unwrap because we know the hashmap conforms to the
-            // register requirements
-            additional_registers: NonMandatoryRegisters::new(registers).unwrap(),
+            additional_registers: NonMandatoryRegisters::new(registers)
+                .expect("Only R4 is used which is always tightly packed"),
             creation_height,
         })
     }
@@ -315,6 +312,7 @@ mod tests {
             pool_type: super::PoolType::N2T,
         }
     }
+
     #[test]
     fn swap_output() {
         let pool = test_pool(1000000000, 1000);
