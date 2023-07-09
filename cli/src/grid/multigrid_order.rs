@@ -19,7 +19,10 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use thiserror::Error;
 
-use crate::units::Fraction;
+use crate::{
+    boxes::describe_box::{BoxAssetDisplay, ErgoBoxDescriptors},
+    units::{Fraction, TokenStore, UnitAmount, ERG_UNIT},
+};
 
 const MIN_BOX_VALUE: u64 = 1000000;
 pub const MAX_FEE: u64 = 2000000;
@@ -485,4 +488,31 @@ pub trait FillMultiGridOrders: Sized {
     ) -> Result<(Self, Vec<(T, MultiGridOrder)>), Self::Error>
     where
         T: Deref<Target = MultiGridOrder>;
+}
+
+impl ErgoBoxDescriptors for MultiGridOrder {
+    fn box_name(&self) -> String {
+        "MultiGrid".to_string()
+    }
+
+    fn assets(&self, tokens: &TokenStore) -> BoxAssetDisplay {
+        let total_tokens = self
+            .entries
+            .iter()
+            .filter_map(|o| match o.state {
+                OrderState::Sell => Some(o.token_amount.as_u64()),
+                OrderState::Buy => None,
+            })
+            .sum::<u64>();
+
+        let token_id = self.token_id;
+
+        let token_info = tokens.get_unit(&token_id);
+
+        let value_amount = UnitAmount::new(ERG_UNIT.clone(), *self.value.as_u64());
+
+        let total_tokens = UnitAmount::new(token_info, total_tokens);
+
+        BoxAssetDisplay::Double(value_amount, total_tokens)
+    }
 }

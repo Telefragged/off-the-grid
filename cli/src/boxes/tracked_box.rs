@@ -4,6 +4,10 @@ use std::{
     ops::Deref,
 };
 
+use crate::units::TokenStore;
+
+use super::describe_box::{BoxAssetDisplay, ErgoBoxDescriptors};
+
 #[derive(Clone)]
 pub struct TrackedBox<T> {
     pub ergo_box: ErgoBox,
@@ -56,5 +60,18 @@ impl<T> Eq for TrackedBox<T> {}
 impl<T> Hash for TrackedBox<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.ergo_box.box_id().hash(state);
+    }
+}
+
+impl<T> ErgoBoxDescriptors for TrackedBox<T>
+where
+    T: ErgoBoxDescriptors,
+{
+    fn box_name(&self) -> String {
+        self.value.box_name()
+    }
+
+    fn assets(&self, tokens: &TokenStore) -> BoxAssetDisplay {
+        self.value.assets(tokens)
     }
 }
