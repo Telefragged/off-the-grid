@@ -24,13 +24,13 @@ impl PartialEq for TokenInfo {
 
 impl Eq for TokenInfo {}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Unit {
-    Known(TokenInfo),
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Unit<'a> {
+    Known(&'a TokenInfo),
     Unknown(TokenId),
 }
 
-impl Unit {
+impl Unit<'_> {
     pub fn base_amount(&self) -> u64 {
         match self {
             Unit::Known(info) => 10u64.pow(info.decimals),
@@ -72,26 +72,27 @@ impl Unit {
         Fraction::from_str(amount)
             .ok()
             .and_then(|amount| (amount * self.base_amount()).floor().to_u64())
-            .map(|amount| UnitAmount::new(self.clone(), amount))
+            .map(|amount| UnitAmount::new(*self, amount))
     }
 }
 
 lazy_static! {
-    pub static ref ERG_UNIT: Unit = Unit::Known(TokenInfo {
+    pub static ref ERG_TOKEN_INFO: TokenInfo = TokenInfo {
         token_id: Digest32::zero().into(),
         name: "ERG".to_string(),
         decimals: 9,
-    });
+    };
+    pub static ref ERG_UNIT: Unit<'static> = Unit::Known(&ERG_TOKEN_INFO);
 }
 
 #[derive(Clone, Debug)]
-pub struct UnitAmount {
-    unit: Unit,
+pub struct UnitAmount<'a> {
+    unit: Unit<'a>,
     amount: u64,
 }
 
-impl UnitAmount {
-    pub fn new(unit: Unit, amount: u64) -> Self {
+impl<'a> UnitAmount<'a> {
+    pub fn new(unit: Unit<'a>, amount: u64) -> Self {
         Self { unit, amount }
     }
 
@@ -113,7 +114,7 @@ impl UnitAmount {
     }
 }
 
-impl Display for UnitAmount {
+impl<'a> Display for UnitAmount<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let precision = f.precision().unwrap_or(self.unit.decimals() as usize);
 
@@ -134,14 +135,14 @@ impl Display for UnitAmount {
 }
 
 #[derive(Clone, Debug)]
-pub struct Price {
-    base: Unit,
-    quote: Unit,
+pub struct Price<'a> {
+    base: Unit<'a>,
+    quote: Unit<'a>,
     price: Fraction,
 }
 
-impl Price {
-    pub fn new(base: Unit, quote: Unit, amount: Fraction) -> Self {
+impl<'a> Price<'a> {
+    pub fn new(base: Unit<'a>, quote: Unit<'a>, amount: Fraction) -> Self {
         Self {
             base,
             quote,
@@ -149,10 +150,10 @@ impl Price {
         }
     }
 
-    pub fn indirect(&self) -> Self {
+    pub fn indirect(&'a self) -> Price<'a> {
         Self {
-            base: self.quote.clone(),
-            quote: self.base.clone(),
+            base: self.quote,
+            quote: self.base,
             price: self.price.recip(),
         }
     }
@@ -160,7 +161,7 @@ impl Price {
     pub fn format(&self) -> String {
         format!(
             "{0:.1$} {2}/{3}",
-            self.price.clone() * Fraction::new(self.base.base_amount(), self.quote.base_amount()),
+            &self.price * Fraction::new(self.base.base_amount(), self.quote.base_amount()),
             self.quote.decimals() as usize,
             self.base.name(),
             self.quote.name()
@@ -169,16 +170,16 @@ impl Price {
 
     pub fn convert_price(&self, other: &UnitAmount) -> Option<UnitAmount> {
         if self.base == *other.unit() {
-            let amount = self.price.clone() * other.amount;
+            let amount = &self.price * other.amount;
             Some(UnitAmount::new(
-                self.quote.clone(),
+                self.quote,
                 amount.floor().to_u64().unwrap_or_default(),
             ))
         } else if self.quote == *other.unit() {
             let self_recip = self.price.recip();
             let amount = self_recip * other.amount();
             Some(UnitAmount::new(
-                self.base.clone(),
+                self.base,
                 amount.floor().to_u64().unwrap_or_default(),
             ))
         } else {
@@ -191,7 +192,7 @@ impl Price {
     }
 }
 
-impl Display for Price {
+impl Display for Price<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.format())
     }
@@ -231,17 +232,17 @@ impl TokenStore {
     pub fn get_unit(&self, token_id: &TokenId) -> Unit {
         self.tokens
             .get(token_id)
-            .map(|token| Unit::Known(token.clone()))
+            .map(Unit::Known)
             .unwrap_or(Unit::Unknown(*token_id))
     }
 
-    pub fn get_unit_by_id(&self, token_name: String) -> Option<Unit> {
+    pub fn get_unit_by_id(&self, token_name: &str) -> Option<Unit> {
         self.tokens
             .values()
             .find(|token| token.name == token_name)
-            .map(|token| Unit::Known(token.clone()))
+            .map(Unit::Known)
             .or_else(|| {
-                Digest32::try_from(token_name)
+                Digest32::try_from(token_name.to_string())
                     .ok()
                     .map(|token_id| Unit::Unknown(token_id.into()))
             })
@@ -251,7 +252,7 @@ impl TokenStore {
         let path = path.unwrap_or("tokens.json".to_string());
         let file = std::fs::File::create(path)?;
         let writer = std::io::BufWriter::new(file);
-        let tokens_vec = self.tokens.values().cloned().collect::<Vec<_>>();
+        let tokens_vec = self.tokens.values().collect::<Vec<_>>();
         serde_json::to_writer_pretty(writer, &tokens_vec)?;
         Ok(())
     }
@@ -323,7 +324,7 @@ mod tests {
         let unit1 = Unit::Unknown(Digest32::zero().into());
         let unit2 = Unit::Unknown(Digest::<32>(token_bytes).into());
 
-        let price = Price::new(unit1.clone(), unit2.clone(), Fraction::new(1u64, 13u64));
+        let price = Price::new(unit1, unit2, Fraction::new(1u64, 13u64));
 
         let unit_amount = UnitAmount::new(unit1, amount);
         let unit_amount2 = price.convert_price(&unit_amount).unwrap();
@@ -339,14 +340,16 @@ mod tests {
 
         let amount = 2000;
 
-        let unit1 = Unit::Known(TokenInfo {
+        let unit1_info = TokenInfo {
             token_id: Digest32::zero().into(),
             name: "A".to_string(),
             decimals: 9,
-        });
+        };
+
+        let unit1 = Unit::Known(&unit1_info);
         let unit2 = Unit::Unknown(Digest::<32>(token_bytes).into());
 
-        let price = Price::new(unit1.clone(), unit2.clone(), Fraction::new(1u64, 13u64));
+        let price = Price::new(unit1, unit2, Fraction::new(1u64, 13u64));
 
         let unit_amount = UnitAmount::new(unit1, amount);
         let unit_amount2 = price.convert_price(&unit_amount).unwrap();
@@ -359,26 +362,28 @@ mod tests {
         let mut token_bytes = [0u8; 32];
         token_bytes[0] = 1;
 
-        let unit1 = Unit::Known(TokenInfo {
+        let unit1_info = TokenInfo {
             token_id: Digest::<32>(token_bytes).into(),
             name: "A".to_string(),
             decimals: decimals1,
-        });
+        };
+        let unit1 = Unit::Known(&unit1_info);
 
-        let unit2 = Unit::Known(TokenInfo {
+        let unit2_info = TokenInfo {
             token_id: Digest32::zero().into(),
             name: "B".to_string(),
             decimals: decimals2,
-        });
+        };
+        let unit2 = Unit::Known(&unit2_info);
 
-        let price = Price::new(unit1.clone(), unit2.clone(), Fraction::new(price1, price2));
+        let price = Price::new(unit1, unit2, Fraction::new(price1, price2));
 
-        let unit_amount = UnitAmount::new(unit1.clone(), amount);
+        let unit_amount = UnitAmount::new(unit1, amount);
         let unit_amount2 = price
             .convert_price(&unit_amount)
             .expect("price conversion failed");
-        let unit_amount3 = price
-            .indirect()
+        let binding = price.indirect();
+        let unit_amount3 = binding
             .convert_price(&unit_amount2)
             .expect("price conversion failed");
 

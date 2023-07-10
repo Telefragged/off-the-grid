@@ -71,7 +71,7 @@ where
         self.value.box_name()
     }
 
-    fn assets(&self, tokens: &TokenStore) -> BoxAssetDisplay {
+    fn assets<'a>(&self, tokens: &'a TokenStore) -> BoxAssetDisplay<'a> {
         self.value.assets(tokens)
     }
 }

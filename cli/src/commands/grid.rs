@@ -161,10 +161,10 @@ async fn handle_grid_create(
 
     let token_store = TokenStore::load(None)?;
 
-    let erg_unit = ERG_UNIT.clone();
+    let erg_unit = *ERG_UNIT;
 
     let unit: Unit = token_store
-        .get_unit_by_id(token_id.clone())
+        .get_unit_by_id(&token_id)
         .ok_or_else(|| anyhow!("{} is not a known token or a valid token ID", token_id))?;
 
     let token_id = unit.token_id();
@@ -242,7 +242,7 @@ async fn handle_grid_create(
         .parse()
         .map_err(|_| anyhow!("Failed to parse end price {}", range.1))?;
 
-    let start_price = Price::new(unit.clone(), erg_unit.clone(), start);
+    let start_price = Price::new(unit, erg_unit, start);
     let end_price = Price::new(unit, erg_unit, end);
 
     let range = GridPriceRange::new(start_price, end_price, num_orders)?;
@@ -402,14 +402,14 @@ async fn handle_grid_list(
         let token_id = order.token_id;
 
         let token_info = tokens.get_unit(&token_id);
-        let erg_info = ERG_UNIT.clone();
+        let erg_info = *ERG_UNIT;
 
-        let total_value = UnitAmount::new(erg_info.clone(), total_value);
-        let total_tokens = UnitAmount::new(token_info.clone(), total_tokens);
+        let total_value = UnitAmount::new(erg_info, total_value);
+        let total_tokens = UnitAmount::new(token_info, total_tokens);
 
-        let profit = UnitAmount::new(erg_info.clone(), profit);
+        let profit = UnitAmount::new(erg_info, profit);
 
-        let to_price = |amount: Fraction| Price::new(token_info.clone(), erg_info.clone(), amount);
+        let to_price = |amount: Fraction| Price::new(token_info, erg_info, amount);
 
         let bid = to_price(bid);
         let ask = to_price(ask);
@@ -543,9 +543,9 @@ pub enum BuildNewGridTxError {
 }
 
 #[derive(Clone, Debug)]
-struct GridPriceRange {
-    start: Price,
-    stop: Price,
+struct GridPriceRange<'a> {
+    start: Price<'a>,
+    stop: Price<'a>,
     num_orders: u64,
 }
 
@@ -555,8 +555,12 @@ enum GridOrderRangeError {
     InvalidRange,
 }
 
-impl GridPriceRange {
-    pub fn new(start: Price, stop: Price, num_orders: u64) -> Result<Self, GridOrderRangeError> {
+impl<'a> GridPriceRange<'a> {
+    pub fn new(
+        start: Price<'a>,
+        stop: Price<'a>,
+        num_orders: u64,
+    ) -> Result<Self, GridOrderRangeError> {
         if start.price() >= stop.price() {
             return Err(GridOrderRangeError::InvalidRange);
         }
@@ -569,7 +573,7 @@ impl GridPriceRange {
     }
 }
 
-impl IntoIterator for GridPriceRange {
+impl IntoIterator for GridPriceRange<'_> {
     type Item = (Fraction, Fraction);
     type IntoIter = GridPriceIterator;
 
@@ -694,8 +698,8 @@ impl ErgoBoxDescriptors for MinerFeeValue {
         "Miner fee".to_string()
     }
 
-    fn assets(&self, _: &TokenStore) -> BoxAssetDisplay {
-        let amount = UnitAmount::new(ERG_UNIT.clone(), *self.0.as_u64());
+    fn assets<'a>(&self, _: &'a TokenStore) -> BoxAssetDisplay<'a> {
+        let amount = UnitAmount::new(*ERG_UNIT, *self.0.as_u64());
         BoxAssetDisplay::Single(amount)
     }
 }

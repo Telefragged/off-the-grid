@@ -267,10 +267,10 @@ impl ErgoBoxDescriptors for SpectrumPool {
         format!("Spectrum {}", self.pool_type.as_str())
     }
 
-    fn assets(&self, tokens: &TokenStore) -> BoxAssetDisplay {
+    fn assets<'a>(&self, tokens: &'a TokenStore) -> BoxAssetDisplay<'a> {
         match self.pool_type {
             PoolType::N2T => {
-                let x_unit = ERG_UNIT.clone();
+                let x_unit = *ERG_UNIT;
                 let y_unit = tokens.get_unit(&self.asset_y().token_id);
 
                 let x_amount = UnitAmount::new(x_unit, *self.asset_x().amount.as_u64());

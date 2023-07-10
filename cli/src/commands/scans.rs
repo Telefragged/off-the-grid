@@ -134,7 +134,7 @@ pub async fn handle_scan_command(
 
             let output_path = output_path.unwrap_or_else(|| "scan_config.json".to_string());
             std::fs::write(
-                output_path.clone(),
+                &output_path,
                 serde_json::to_string_pretty(&scan_config)?,
             )?;
 

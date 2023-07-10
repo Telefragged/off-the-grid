@@ -495,7 +495,7 @@ impl ErgoBoxDescriptors for MultiGridOrder {
         "MultiGrid".to_string()
     }
 
-    fn assets(&self, tokens: &TokenStore) -> BoxAssetDisplay {
+    fn assets<'a>(&self, tokens: &'a TokenStore) -> BoxAssetDisplay<'a> {
         let total_tokens = self
             .entries
             .iter()
@@ -509,7 +509,7 @@ impl ErgoBoxDescriptors for MultiGridOrder {
 
         let token_info = tokens.get_unit(&token_id);
 
-        let value_amount = UnitAmount::new(ERG_UNIT.clone(), *self.value.as_u64());
+        let value_amount = UnitAmount::new(*ERG_UNIT, *self.value.as_u64());
 
         let total_tokens = UnitAmount::new(token_info, total_tokens);
 

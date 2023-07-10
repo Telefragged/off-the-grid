@@ -2,13 +2,13 @@ use std::fmt::Display;
 
 use crate::units::{TokenStore, UnitAmount};
 
-pub enum BoxAssetDisplay {
-    Single(UnitAmount),
-    Double(UnitAmount, UnitAmount),
-    Many(UnitAmount, usize),
+pub enum BoxAssetDisplay<'a> {
+    Single(UnitAmount<'a>),
+    Double(UnitAmount<'a>, UnitAmount<'a>),
+    Many(UnitAmount<'a>, usize),
 }
 
-impl BoxAssetDisplay {
+impl BoxAssetDisplay<'_> {
     pub fn strings(&self, precision: Option<usize>) -> (String, String) {
         let first = match self {
             BoxAssetDisplay::Single(amount) => amount,
@@ -31,7 +31,7 @@ impl BoxAssetDisplay {
     }
 }
 
-impl Display for BoxAssetDisplay {
+impl Display for BoxAssetDisplay<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let width = f.width().unwrap_or(32);
 
@@ -55,5 +55,5 @@ impl Display for BoxAssetDisplay {
 pub trait ErgoBoxDescriptors {
     fn box_name(&self) -> String;
 
-    fn assets(&self, tokens: &TokenStore) -> BoxAssetDisplay;
+    fn assets<'a>(&self, tokens: &'a TokenStore) -> BoxAssetDisplay<'a>;
 }

@@ -44,8 +44,8 @@ where
         "Wallet".to_string()
     }
 
-    fn assets(&self, _: &TokenStore) -> super::describe_box::BoxAssetDisplay {
-        let amount = UnitAmount::new(ERG_UNIT.clone(), *self.value().as_u64());
+    fn assets<'a>(&self, _: &'a TokenStore) -> BoxAssetDisplay<'a> {
+        let amount = UnitAmount::new(*ERG_UNIT, *self.value().as_u64());
         let num_tokens = self.tokens().map(|tokens| tokens.len()).unwrap_or(0);
 
         BoxAssetDisplay::Many(amount, num_tokens)
