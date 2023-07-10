@@ -3,7 +3,7 @@ use std::{
     iter::once,
 };
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use colored::Colorize;
 use ergo_lib::{
@@ -256,7 +256,8 @@ async fn handle_grid_create(
         fee_value,
         wallet_boxes,
         grid_identity,
-    )?;
+    )
+    .context("Creating grid transaction")?;
 
     if submit {
         let tx = grid_tx_data.try_into()?;
@@ -938,9 +939,10 @@ fn build_new_grid_data<T: LiquidityProvider>(
                 .map(|s| *s.asset_x().amount.as_u64() as i64),
         )
         .chain(liquidity_box.iter().map(|lb| -lb.ergo_box.value.as_i64()))
-        .sum::<i64>();
+        .sum::<i64>()
+        .try_into()?;
 
-    let selection = SimpleBoxSelector::new().select(wallet_boxes, missing_ergs.try_into()?, &[])?;
+    let selection = SimpleBoxSelector::new().select(wallet_boxes, missing_ergs, &[])?;
 
     let liquidity_data = liquidity_box
         .zip(liquidity_state)
