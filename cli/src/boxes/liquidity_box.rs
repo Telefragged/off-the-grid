@@ -48,21 +48,22 @@ pub trait LiquidityProvider: Sized + Clone {
 
 /// The state of the order matching process for a specific multi-grid order
 /// This is needed since the order matching process can only occur in one direction
-enum OrderMatchingState {
+enum OrderMatchingState<'a> {
     /// The order has not been matched yet, meaning that the bid and ask are still available
-    NotMatched(GridOrderEntries),
+    NotMatched(&'a GridOrderEntries),
     /// The bid has been matched, meaning that the order can only be filled by more buys
     MatchedBid(GridOrderEntries),
     /// The ask has been matched, meaning that the order can only be filled by more sells
     MatchedAsk(GridOrderEntries),
 }
 
-impl OrderMatchingState {
+impl OrderMatchingState<'_> {
     fn fill_bid(&mut self) {
         match self {
             OrderMatchingState::NotMatched(entries) => {
+                let mut entries = entries.clone();
                 entries.bid_entry_mut().unwrap().state = OrderState::Sell;
-                *self = OrderMatchingState::MatchedBid(entries.clone());
+                *self = OrderMatchingState::MatchedBid(entries);
             }
             OrderMatchingState::MatchedBid(entries) => {
                 entries.bid_entry_mut().unwrap().state = OrderState::Sell;
@@ -76,8 +77,9 @@ impl OrderMatchingState {
     fn fill_ask(&mut self) {
         match self {
             OrderMatchingState::NotMatched(entries) => {
+                let mut entries = entries.clone();
                 entries.ask_entry_mut().unwrap().state = OrderState::Buy;
-                *self = OrderMatchingState::MatchedAsk(entries.clone());
+                *self = OrderMatchingState::MatchedAsk(entries);
             }
             OrderMatchingState::MatchedBid(_) => {
                 panic!("Cannot fill ask when bid is already filled");
@@ -131,21 +133,16 @@ impl OrderMatchingState {
 }
 
 struct SurplusResult {
-    updater: fn(&mut OrderMatchingState),
+    matched_state: OrderState,
     new_x: i64,
     new_y: i64,
     surplus: i64,
 }
 
 impl SurplusResult {
-    fn new(
-        updater: fn(&mut OrderMatchingState),
-        new_x: i64,
-        new_y: i64,
-        surplus: i64,
-    ) -> SurplusResult {
+    fn new(matched_state: OrderState, new_x: i64, new_y: i64, surplus: i64) -> Self {
         SurplusResult {
-            updater,
+            matched_state,
             new_x,
             new_y,
             surplus,
@@ -162,16 +159,14 @@ fn calculate_surplus<T>(
 where
     T: LiquidityProvider,
 {
-    let (new_x, new_y, updater) = match entry.state {
+    let (new_x, new_y) = match entry.state {
         OrderState::Buy => (
             cur_x + entry.bid_value as i64,
             cur_y - *entry.token_amount.as_u64() as i64,
-            OrderMatchingState::fill_bid as fn(&mut OrderMatchingState),
         ),
         OrderState::Sell => (
             cur_x - entry.ask_value as i64,
             cur_y + *entry.token_amount.as_u64() as i64,
-            OrderMatchingState::fill_ask as fn(&mut OrderMatchingState),
         ),
     };
 
@@ -185,7 +180,7 @@ where
             if let Ok(output) = liquidity_provider.output_amount(&input) {
                 let surplus = new_x + *output.amount.as_u64() as i64;
 
-                Some(SurplusResult::new(updater, new_x, new_y, surplus))
+                Some(SurplusResult::new(entry.state, new_x, new_y, surplus))
             } else {
                 None
             }
@@ -199,12 +194,12 @@ where
             if let Ok(input) = liquidity_provider.input_amount(&output) {
                 let surplus = new_x - *input.amount.as_u64() as i64;
 
-                Some(SurplusResult::new(updater, new_x, new_y, surplus))
+                Some(SurplusResult::new(entry.state, new_x, new_y, surplus))
             } else {
                 None
             }
         }
-        Ordering::Equal => Some(SurplusResult::new(updater, new_x, new_y, new_x)),
+        Ordering::Equal => Some(SurplusResult::new(entry.state, new_x, new_y, new_x)),
     }
 }
 
@@ -221,12 +216,9 @@ where
     where
         G: Deref<Target = MultiGridOrder>,
     {
-        let mut orders: Vec<_> = grid_orders
-            .into_iter()
-            .map(|order| {
-                let entries = order.entries.clone();
-                (order, OrderMatchingState::NotMatched(entries))
-            })
+        let mut matched_states: Vec<_> = grid_orders
+            .iter()
+            .map(|order| OrderMatchingState::NotMatched(&order.entries))
             .collect();
 
         let mut liquidity_x_diff = 0i64;
@@ -234,9 +226,9 @@ where
         let mut current_surplus = 0i64;
 
         loop {
-            let best_order = orders
+            let best_order = matched_states
                 .iter_mut()
-                .filter_map(|(_, state)| {
+                .filter_map(|state| {
                     state
                         .state_surplus(&self, liquidity_x_diff, liquidity_y_diff)
                         .map(|surplus_result| (state, surplus_result))
@@ -249,22 +241,35 @@ where
                     liquidity_y_diff = surplus_result.new_y;
                     current_surplus = surplus_result.surplus;
 
-                    (surplus_result.updater)(state);
+                    match surplus_result.matched_state {
+                        OrderState::Buy => {
+                            state.fill_bid();
+                        }
+                        OrderState::Sell => {
+                            state.fill_ask();
+                        }
+                    }
                 }
                 _ => break,
             }
         }
 
-        let filled_orders: Vec<_> = orders
+        let new_states: Vec<_> = matched_states
             .into_iter()
-            .filter_map(|(order, state)| {
-                match state {
-                    OrderMatchingState::NotMatched(_) => None,
-                    OrderMatchingState::MatchedBid(entries) => Some(entries),
-                    OrderMatchingState::MatchedAsk(entries) => Some(entries),
-                }
-                .and_then(|entries| order.clone().with_entries(entries).ok())
-                .map(|filled| (order, filled))
+            .map(|state| match state {
+                OrderMatchingState::NotMatched(_) => None,
+                OrderMatchingState::MatchedBid(entries) => Some(entries),
+                OrderMatchingState::MatchedAsk(entries) => Some(entries),
+            })
+            .collect();
+
+        let filled_orders = new_states
+            .into_iter()
+            .zip(grid_orders)
+            .filter_map(|(entries, order)| {
+                entries
+                    .and_then(|entries| order.clone().with_entries(entries).ok())
+                    .map(|filled| (order, filled))
             })
             .collect();
 
