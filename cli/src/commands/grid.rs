@@ -373,7 +373,7 @@ async fn handle_grid_list(
         .unwrap_or(0);
 
     for order in grid_orders {
-        let entries = &order.entries;
+        let entries = &order.value.entries;
 
         let num_buy_orders = entries
             .iter()
@@ -389,7 +389,7 @@ async fn handle_grid_list(
 
         let ask = entries.ask_entry().map(|o| o.ask()).unwrap_or_default();
 
-        let profit = order.profit();
+        let profit = order.value.profit();
 
         let total_value = *order.value.value.as_u64();
 
@@ -400,7 +400,7 @@ async fn handle_grid_list(
             .map(|t| *t.first().amount.as_u64())
             .unwrap_or(0);
 
-        let token_id = order.token_id;
+        let token_id = order.value.token_id;
 
         let token_info = tokens.get_unit(&token_id);
         let erg_info = *ERG_UNIT;

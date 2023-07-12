@@ -3,11 +3,11 @@ use ergo_lib::ergotree_ir::chain::{
     token::{Token, TokenAmountError, TokenId},
 };
 use num_bigint::BigInt;
-use std::{cmp::Ordering, ops::Deref};
+use std::cmp::Ordering;
 use thiserror::Error;
 
 use crate::grid::multigrid_order::{
-    FillMultiGridOrders, GridOrderEntries, GridOrderEntry, MultiGridOrder, OrderState,
+    FillMultiGridOrders, GridOrderEntries, GridOrderEntry, MultiGridOrder, MultiGridRef, OrderState,
 };
 
 #[derive(Error, Debug)]
@@ -214,11 +214,11 @@ where
         grid_orders: Vec<G>,
     ) -> Result<(Self, Vec<(G, MultiGridOrder)>), Self::Error>
     where
-        G: Deref<Target = MultiGridOrder>,
+        G: MultiGridRef,
     {
         let mut matched_states: Vec<_> = grid_orders
             .iter()
-            .map(|order| OrderMatchingState::NotMatched(&order.entries))
+            .map(|order| OrderMatchingState::NotMatched(&order.order_ref().entries))
             .collect();
 
         let mut liquidity_x_diff = 0i64;
@@ -268,7 +268,7 @@ where
             .zip(grid_orders)
             .filter_map(|(entries, order)| {
                 entries
-                    .and_then(|entries| order.clone().with_entries(entries).ok())
+                    .and_then(|entries| order.order_ref().to_owned().with_entries(entries).ok())
                     .map(|filled| (order, filled))
             })
             .collect();

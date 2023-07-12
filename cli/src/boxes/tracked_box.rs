@@ -1,8 +1,5 @@
 use ergo_lib::ergotree_ir::chain::ergo_box::ErgoBox;
-use std::{
-    hash::{Hash, Hasher},
-    ops::Deref,
-};
+use std::hash::{Hash, Hasher};
 
 use crate::units::TokenStore;
 
@@ -38,14 +35,6 @@ where
             ergo_box: ergo_box.clone(),
             value,
         })
-    }
-}
-
-impl<T> Deref for TrackedBox<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.value
     }
 }
 

@@ -16,11 +16,10 @@ use ergo_lib::{
 
 use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::ops::Deref;
 use thiserror::Error;
 
 use crate::{
-    boxes::describe_box::{BoxAssetDisplay, ErgoBoxDescriptors},
+    boxes::{describe_box::{BoxAssetDisplay, ErgoBoxDescriptors}, tracked_box::TrackedBox},
     units::{Fraction, TokenStore, UnitAmount, ERG_UNIT},
 };
 
@@ -478,6 +477,22 @@ impl TryFrom<&ErgoBox> for MultiGridOrder {
     }
 }
 
+pub trait MultiGridRef: Clone {
+    fn order_ref(&self) -> &MultiGridOrder;
+}
+
+impl MultiGridRef for &MultiGridOrder {
+    fn order_ref(&self) -> &MultiGridOrder {
+        self
+    }
+}
+
+impl MultiGridRef for TrackedBox<MultiGridOrder> {
+    fn order_ref(&self) -> &MultiGridOrder {
+        &self.value
+    }
+}
+
 pub trait FillMultiGridOrders: Sized {
     type Error;
 
@@ -487,7 +502,7 @@ pub trait FillMultiGridOrders: Sized {
         grid_orders: Vec<T>,
     ) -> Result<(Self, Vec<(T, MultiGridOrder)>), Self::Error>
     where
-        T: Deref<Target = MultiGridOrder>;
+        T: MultiGridRef;
 }
 
 impl ErgoBoxDescriptors for MultiGridOrder {
