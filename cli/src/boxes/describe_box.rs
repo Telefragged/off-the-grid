@@ -22,6 +22,13 @@ impl BoxAssetDisplay<'_> {
         let second = match (self, precision) {
             (BoxAssetDisplay::Double(_, amount), Some(p)) => format!("{:.p$}", amount, p = p),
             (BoxAssetDisplay::Double(_, amount), None) => amount.to_string(),
+            (BoxAssetDisplay::Many(_, num), _) => {
+                match num {
+                    0 => String::new(),
+                    1 => "1 token".to_string(),
+                    tokens => format!("{} tokens", tokens),
+                }
+            }
             _ => String::new(),
         };
 
