@@ -855,7 +855,7 @@ where
     table
         .with(Style::empty())
         .with(Modify::new(Columns::new(1..)).with(Alignment::right()))
-        .with(Modify::new(Rows::new(..1)).with(Alignment::left()))
+        .with(Modify::new(Rows::single(0)).with(Alignment::left()))
         .with(Disable::row(Columns::single(0)))
         .with(Modify::new(Columns::new(0..)).with(Format::content(formatting)));
 }
