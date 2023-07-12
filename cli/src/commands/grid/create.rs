@@ -1,28 +1,25 @@
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    iter::once,
-};
+use std::iter::once;
 
 use anyhow::{anyhow, Context};
-use clap::{ArgGroup, Args, Parser, Subcommand};
+use clap::{ArgGroup, Parser};
 use colored::Colorize;
 use ergo_lib::{
     chain::transaction::{unsigned::UnsignedTransaction, TransactionError, UnsignedInput},
-    ergo_chain_types::{Digest32, EcPoint},
+    ergo_chain_types::EcPoint,
     ergotree_ir::chain::{
         address::Address,
         ergo_box::{
             box_value::{BoxValue, BoxValueError},
             ErgoBox, ErgoBoxCandidate, NonMandatoryRegisters,
         },
-        token::{Token, TokenAmount, TokenAmountError, TokenId},
+        token::{TokenAmount, TokenAmountError, TokenId},
     },
     wallet::{
         box_selector::{BoxSelector, BoxSelectorError, ErgoBoxAssetsData, SimpleBoxSelector},
         miner_fee::MINERS_FEE_ADDRESS,
     },
 };
-use fraction::ToPrimitive;
+use num_traits::ToPrimitive;
 use off_the_grid::{
     boxes::{
         describe_box::{BoxAssetDisplay, ErgoBoxDescriptors},
@@ -36,14 +33,13 @@ use off_the_grid::{
     },
     node::client::NodeClient,
     spectrum::pool::SpectrumPool,
-    units::{Price, TokenStore, Unit, UnitAmount, ERG_UNIT},
+    units::{Fraction, Price, TokenStore, Unit, UnitAmount, ERG_UNIT},
 };
 use tabled::{
     row,
     settings::{
-        format::Format,
         object::{Columns, Rows},
-        Alignment, Disable, Modify, Style,
+        Alignment, Disable, Format, Modify, Style,
     },
     Table, Tabled,
 };
@@ -51,7 +47,6 @@ use thiserror::Error;
 use tokio::try_join;
 
 use crate::scan_config::ScanConfig;
-use off_the_grid::units::Fraction;
 
 #[derive(Parser)]
 #[command(group(
@@ -90,53 +85,6 @@ pub struct CreateOptions {
     grid_identity: Option<String>,
 }
 
-#[derive(Parser)]
-#[command(group(
-    ArgGroup::new("filter")
-        .required(true)
-        .args(&["token_id", "grid_identity", "all"])
-))]
-pub struct RedeemOptions {
-    #[clap(short = 't', long, help = "TokenID to filter by")]
-    token_id: Option<String>,
-    #[clap(short = 'i', long, help = "Grid group identity")]
-    grid_identity: Option<String>,
-    #[clap(short = 'a', long, help = "Redeem all orders")]
-    all: bool,
-    #[clap(
-        short,
-        long,
-        help = "transaction fee value, in nanoERGs",
-        default_value_t = 1000000
-    )]
-    fee: u64,
-    #[clap(short = 'y', help = "Submit transaction")]
-    submit: bool,
-}
-
-#[derive(Subcommand)]
-pub enum Commands {
-    Create(CreateOptions),
-    Redeem(RedeemOptions),
-    List {
-        #[clap(short = 't', long, help = "TokenID to filter by")]
-        token_id: Option<String>,
-    },
-    Details {
-        #[clap(short = 'i', long, help = "Grid group identity")]
-        grid_identity: String,
-    },
-}
-
-#[derive(Args)]
-pub struct GridCommand {
-    #[clap(long, help = "Scan configuration file path [default: scan_config]")]
-    scan_config: Option<String>,
-
-    #[command(subcommand)]
-    command: Commands,
-}
-
 fn grid_order_range_from_str(s: &str) -> Result<(String, String), String> {
     let parts: Vec<&str> = s.split("..").collect();
     if let [start, stop] = parts.as_slice() {
@@ -146,7 +94,98 @@ fn grid_order_range_from_str(s: &str) -> Result<(String, String), String> {
     }
 }
 
-async fn handle_grid_create(
+#[derive(Clone, Debug)]
+struct GridPriceRange<'a> {
+    start: Price<'a>,
+    stop: Price<'a>,
+    num_orders: u64,
+}
+
+#[derive(Error, Debug)]
+enum GridOrderRangeError {
+    #[error("Invalid range: start must be below stop")]
+    InvalidRange,
+}
+
+impl<'a> GridPriceRange<'a> {
+    pub fn new(
+        start: Price<'a>,
+        stop: Price<'a>,
+        num_orders: u64,
+    ) -> Result<Self, GridOrderRangeError> {
+        if start.price() >= stop.price() {
+            return Err(GridOrderRangeError::InvalidRange);
+        }
+
+        Ok(GridPriceRange {
+            start,
+            stop,
+            num_orders,
+        })
+    }
+}
+
+impl IntoIterator for GridPriceRange<'_> {
+    type Item = (Fraction, Fraction);
+    type IntoIter = GridPriceIterator;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let start = self.start.price();
+        let stop = self.stop.price();
+        let step = (&stop - &start) / self.num_orders;
+        GridPriceIterator {
+            base: start,
+            current: 0,
+            num_orders: self.num_orders,
+            step,
+        }
+    }
+}
+
+struct GridPriceIterator {
+    base: Fraction,
+    current: u64,
+    num_orders: u64,
+    step: Fraction,
+}
+
+impl Iterator for GridPriceIterator {
+    type Item = (Fraction, Fraction);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current >= self.num_orders {
+            return None;
+        }
+
+        let lo = &self.base + &self.step * self.current;
+        let hi = &self.base + &self.step * (self.current + 1);
+
+        self.current += 1;
+        // return the reciprocal of the fraction to get the price
+        // in the base token
+        Some((hi.recip(), lo.recip()))
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum BuildNewGridTxError {
+    #[error(transparent)]
+    LiquidityProvider(#[from] LiquidityProviderError),
+    #[error(transparent)]
+    TokenAmount(#[from] TokenAmountError),
+    #[error(transparent)]
+    MultiGridOrder(#[from] MultiGridOrderError),
+    #[error(transparent)]
+    BoxValue(#[from] BoxValueError),
+    #[error(transparent)]
+    BoxSelector(#[from] BoxSelectorError),
+    #[error(transparent)]
+    Transaction(#[from] TransactionError),
+    #[error("Invalid fraction: {0}")]
+    InvalidFraction(Fraction),
+}
+
+pub async fn handle_grid_create(
     node_client: NodeClient,
     scan_config: ScanConfig,
     options: CreateOptions,
@@ -275,417 +314,6 @@ async fn handle_grid_create(
     }
 
     Ok(())
-}
-
-pub async fn handle_grid_redeem(
-    node_client: NodeClient,
-    scan_config: ScanConfig,
-    options: RedeemOptions,
-) -> anyhow::Result<()> {
-    let RedeemOptions {
-        token_id,
-        grid_identity,
-        all: _,
-        fee,
-        submit,
-    } = options;
-
-    let grid_identity = grid_identity.map(|i| i.into_bytes());
-
-    let token_id = token_id
-        .map(|i| Digest32::try_from(i).map(|i| i.into()))
-        .transpose()?;
-
-    let grid_orders = node_client
-        .get_scan_unspent(scan_config.wallet_multigrid_scan_id)
-        .await?
-        .into_iter()
-        .filter_map(|b| b.try_into().ok())
-        .filter(|b: &TrackedBox<MultiGridOrder>| {
-            grid_identity
-                .as_ref()
-                .map(|i| b.value.metadata.as_ref().map(|m| *m == *i).unwrap_or(false))
-                .unwrap_or(true)
-        })
-        .filter(|b: &TrackedBox<MultiGridOrder>| {
-            token_id
-                .as_ref()
-                .map(|i| b.value.token_id == *i)
-                .unwrap_or(true)
-        })
-        .collect::<Vec<_>>();
-
-    if grid_orders.is_empty() {
-        return Err(anyhow!("No grid orders found"));
-    }
-
-    let wallet_status = node_client.wallet_status().await?;
-    wallet_status.error_if_locked()?;
-
-    let tx = build_redeem_multi_tx(
-        grid_orders,
-        node_client.wallet_status().await?.change_address()?,
-        fee.try_into()?,
-    )
-    .unwrap();
-
-    let signed = node_client.wallet_transaction_sign(&tx).await?;
-
-    if submit {
-        let tx_id = node_client.transaction_submit(&signed).await?;
-        println!("Transaction submitted: {:?}", tx_id);
-    } else {
-        println!("{}", serde_json::to_string_pretty(&signed)?);
-    }
-
-    Ok(())
-}
-
-async fn handle_grid_list(
-    node_client: NodeClient,
-    scan_config: ScanConfig,
-    token_id: Option<String>,
-) -> Result<(), anyhow::Error> {
-    let token_id = token_id
-        .map(|i| Digest32::try_from(i).map(|i| i.into()))
-        .transpose()?;
-
-    let grid_orders = node_client
-        .get_scan_unspent(scan_config.wallet_multigrid_scan_id)
-        .await?
-        .into_iter()
-        .filter_map(|b| b.try_into().ok())
-        .filter(|b: &TrackedBox<MultiGridOrder>| {
-            token_id
-                .as_ref()
-                .map(|i| b.value.token_id == *i)
-                .unwrap_or(true)
-        })
-        .collect::<Vec<_>>();
-
-    if grid_orders.is_empty() {
-        println!("No grid orders found");
-        return Ok(());
-    }
-
-    let tokens = TokenStore::load(None)?;
-
-    let name_width = grid_orders
-        .iter()
-        .map(|o| o.value.metadata.as_ref().map(|m| m.len()).unwrap_or(0))
-        .max()
-        .unwrap_or(0);
-
-    for order in grid_orders {
-        let entries = &order.value.entries;
-
-        let num_buy_orders = entries
-            .iter()
-            .filter(|o| o.state == OrderState::Buy)
-            .count();
-
-        let num_sell_orders = entries
-            .iter()
-            .filter(|o| o.state == OrderState::Sell)
-            .count();
-
-        let bid = entries.bid_entry().map(|o| o.bid()).unwrap_or_default();
-
-        let ask = entries.ask_entry().map(|o| o.ask()).unwrap_or_default();
-
-        let profit = order.value.profit();
-
-        let total_value = *order.value.value.as_u64();
-
-        let total_tokens = order
-            .ergo_box
-            .tokens
-            .as_ref()
-            .map(|t| *t.first().amount.as_u64())
-            .unwrap_or(0);
-
-        let token_id = order.value.token_id;
-
-        let token_info = tokens.get_unit(&token_id);
-        let erg_info = *ERG_UNIT;
-
-        let total_value = UnitAmount::new(erg_info, total_value);
-        let total_tokens = UnitAmount::new(token_info, total_tokens);
-
-        let profit = UnitAmount::new(erg_info, profit);
-
-        let to_price = |amount: Fraction| Price::new(token_info, erg_info, amount);
-
-        let bid = to_price(bid);
-        let ask = to_price(ask);
-        let profit_in_token = ask.convert_price(&profit).unwrap();
-
-        let grid_identity = if let Some(grid_identity) = order.value.metadata.as_ref() {
-            String::from_utf8(grid_identity.clone())
-                .unwrap_or_else(|_| format!("{:?}", grid_identity))
-        } else {
-            "No identity".to_string()
-        };
-
-        println!(
-            "{: <9$} | {} Sell {} Buy, Bid {} Ask {}, Profit {} ({}), Total {} {}",
-            grid_identity,
-            num_sell_orders,
-            num_buy_orders,
-            bid.indirect(),
-            ask.indirect(),
-            profit,
-            profit_in_token,
-            total_value,
-            total_tokens,
-            name_width
-        );
-    }
-
-    Ok(())
-}
-
-async fn handle_grid_details(
-    node_client: NodeClient,
-    scan_config: ScanConfig,
-    grid_identity: String,
-) -> Result<(), anyhow::Error> {
-    let grid_identity = grid_identity.into_bytes();
-
-    let grid_order = node_client
-        .get_scan_unspent(scan_config.wallet_multigrid_scan_id)
-        .await?
-        .into_iter()
-        .filter_map(|b| b.try_into().ok())
-        .find(|b: &TrackedBox<MultiGridOrder>| {
-            b.value
-                .metadata
-                .as_ref()
-                .map(|i| *i == *grid_identity)
-                .unwrap_or(false)
-        });
-
-    match grid_order {
-        Some(grid_order) => {
-            let tokens = TokenStore::load(None)?;
-
-            let token_id = grid_order.value.token_id;
-
-            let token_info = tokens.get_unit(&token_id);
-            let erg_info = *ERG_UNIT;
-
-            for entry in grid_order.value.entries.iter() {
-                let bid = entry.bid();
-                let ask = entry.ask();
-
-                let to_price = |amount: Fraction| Price::new(token_info, erg_info, amount);
-
-                let price = match entry.state {
-                    OrderState::Buy => bid,
-                    OrderState::Sell => ask,
-                };
-
-                let price = to_price(price);
-
-                let amount = UnitAmount::new(token_info, *entry.token_amount.as_u64());
-
-                let state_str = match entry.state {
-                    OrderState::Buy => "Buy",
-                    OrderState::Sell => "Sell",
-                };
-
-                println!(
-                    "{:>4} {:>8} @ {:>15}",
-                    state_str,
-                    amount.to_string(),
-                    price.indirect().to_string(),
-                );
-            }
-            Ok(())
-        }
-        None => {
-            println!("No grid order found");
-            Ok(())
-        }
-    }
-}
-
-pub async fn handle_grid_command(
-    node_client: NodeClient,
-    orders_command: GridCommand,
-) -> anyhow::Result<()> {
-    let scan_config = ScanConfig::try_create(orders_command.scan_config, None)?;
-
-    match orders_command.command {
-        Commands::Create(options) => handle_grid_create(node_client, scan_config, options).await,
-        Commands::Redeem(options) => handle_grid_redeem(node_client, scan_config, options).await,
-        Commands::List { token_id } => handle_grid_list(node_client, scan_config, token_id).await,
-        Commands::Details { grid_identity } => {
-            handle_grid_details(node_client, scan_config, grid_identity).await
-        }
-    }
-}
-
-fn build_redeem_multi_tx(
-    orders: Vec<TrackedBox<MultiGridOrder>>,
-    change_address: Address,
-    fee_value: BoxValue,
-) -> anyhow::Result<UnsignedTransaction> {
-    let creation_height = orders
-        .iter()
-        .map(|o| o.ergo_box.creation_height)
-        .max()
-        .unwrap_or(0);
-
-    let change_value = orders
-        .iter()
-        .map(|o| o.ergo_box.value.as_u64())
-        .sum::<u64>()
-        .checked_sub(*fee_value.as_u64())
-        .ok_or(anyhow!("Not enough funds for fee"))?;
-
-    let mut change_tokens: HashMap<TokenId, TokenAmount> = HashMap::new();
-
-    for order in orders.iter() {
-        for token in order.ergo_box.tokens.as_ref().iter().flat_map(|b| b.iter()) {
-            match change_tokens.entry(token.token_id) {
-                Entry::Occupied(mut e) => {
-                    let amount = e.get_mut();
-                    *amount = amount.checked_add(&token.amount)?;
-                }
-                Entry::Vacant(e) => {
-                    e.insert(token.amount);
-                }
-            }
-        }
-    }
-
-    let tokens = if change_tokens.is_empty() {
-        None
-    } else {
-        Some(
-            change_tokens
-                .into_iter()
-                .map(Token::from)
-                .collect::<Vec<_>>()
-                .try_into()?,
-        )
-    };
-
-    let change_candidate = ErgoBoxCandidate {
-        value: change_value.try_into()?,
-        ergo_tree: change_address.script().unwrap(),
-        tokens,
-        additional_registers: NonMandatoryRegisters::empty(),
-        creation_height,
-    };
-
-    let fee_output_candidate = ErgoBoxCandidate {
-        value: fee_value,
-        ergo_tree: MINERS_FEE_ADDRESS.script().unwrap(),
-        tokens: None,
-        additional_registers: NonMandatoryRegisters::empty(),
-        creation_height,
-    };
-
-    let inputs = orders.into_iter().map(|o| o.ergo_box.into()).collect();
-
-    Ok(UnsignedTransaction::new_from_vec(
-        inputs,
-        vec![],
-        vec![change_candidate, fee_output_candidate],
-    )?)
-}
-
-#[derive(Error, Debug)]
-pub enum BuildNewGridTxError {
-    #[error(transparent)]
-    LiquidityProvider(#[from] LiquidityProviderError),
-    #[error(transparent)]
-    TokenAmount(#[from] TokenAmountError),
-    #[error(transparent)]
-    MultiGridOrder(#[from] MultiGridOrderError),
-    #[error(transparent)]
-    BoxValue(#[from] BoxValueError),
-    #[error(transparent)]
-    BoxSelector(#[from] BoxSelectorError),
-    #[error(transparent)]
-    Transaction(#[from] TransactionError),
-    #[error("Invalid fraction: {0}")]
-    InvalidFraction(Fraction),
-}
-
-#[derive(Clone, Debug)]
-struct GridPriceRange<'a> {
-    start: Price<'a>,
-    stop: Price<'a>,
-    num_orders: u64,
-}
-
-#[derive(Error, Debug)]
-enum GridOrderRangeError {
-    #[error("Invalid range: start must be below stop")]
-    InvalidRange,
-}
-
-impl<'a> GridPriceRange<'a> {
-    pub fn new(
-        start: Price<'a>,
-        stop: Price<'a>,
-        num_orders: u64,
-    ) -> Result<Self, GridOrderRangeError> {
-        if start.price() >= stop.price() {
-            return Err(GridOrderRangeError::InvalidRange);
-        }
-
-        Ok(GridPriceRange {
-            start,
-            stop,
-            num_orders,
-        })
-    }
-}
-
-impl IntoIterator for GridPriceRange<'_> {
-    type Item = (Fraction, Fraction);
-    type IntoIter = GridPriceIterator;
-
-    fn into_iter(self) -> Self::IntoIter {
-        let start = self.start.price();
-        let stop = self.stop.price();
-        let step = (&stop - &start) / self.num_orders;
-        GridPriceIterator {
-            base: start,
-            current: 0,
-            num_orders: self.num_orders,
-            step,
-        }
-    }
-}
-
-struct GridPriceIterator {
-    base: Fraction,
-    current: u64,
-    num_orders: u64,
-    step: Fraction,
-}
-
-impl Iterator for GridPriceIterator {
-    type Item = (Fraction, Fraction);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.current >= self.num_orders {
-            return None;
-        }
-
-        let lo = &self.base + &self.step * self.current;
-        let hi = &self.base + &self.step * (self.current + 1);
-
-        self.current += 1;
-        // return the reciprocal of the fraction to get the price
-        // in the base token
-        Some((hi.recip(), lo.recip()))
-    }
 }
 
 fn fraction_to_u64(fraction: Fraction) -> Result<u64, BuildNewGridTxError> {
