@@ -283,8 +283,8 @@ mod tests {
         #[test]
         fn convert_price_prop(
             amount in any::<u64>(),
-            price1 in  any::<u64>(),
-            price2 in  any::<u64>(),
+            price1 in any::<u64>(),
+            price2 in any::<u64>(),
             decimals1 in any::<u32>(),
             decimals2 in any::<u32>(),
         ) {
