@@ -181,8 +181,6 @@ fn swap_single_roundtrip() {
     )
     .unwrap();
 
-    println!("tx: {}", serde_json::to_string_pretty(&tx).unwrap());
-
     prove_input(initial_box, tx, TestProver { secrets: vec![] }).expect("Failed to prove input");
 
     let swapped_box = ErgoBox::from_box_candidate(&swapped_candidate, TxId::zero(), 0).unwrap();
