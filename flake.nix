@@ -73,6 +73,7 @@
               openssl
               pkg-config
               rust
+              rust-analyzer
               escompile
               es2ergotree
             ];
