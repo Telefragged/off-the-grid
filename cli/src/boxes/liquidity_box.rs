@@ -177,13 +177,11 @@ where
                 (new_y as u64).try_into().expect("non-zero"),
             )
                 .into();
-            if let Ok(output) = liquidity_provider.output_amount(&input) {
-                let surplus = new_x + *output.amount.as_u64() as i64;
 
-                Some(SurplusResult::new(entry.state, new_x, new_y, surplus))
-            } else {
-                None
-            }
+            let output = liquidity_provider.output_amount(&input).ok()?;
+            let surplus = new_x + *output.amount.as_u64() as i64;
+
+            Some(SurplusResult::new(entry.state, new_x, new_y, surplus))
         }
         Ordering::Less => {
             let output = (
@@ -191,13 +189,11 @@ where
                 new_y.unsigned_abs().try_into().expect("non-zero"),
             )
                 .into();
-            if let Ok(input) = liquidity_provider.input_amount(&output) {
-                let surplus = new_x - *input.amount.as_u64() as i64;
 
-                Some(SurplusResult::new(entry.state, new_x, new_y, surplus))
-            } else {
-                None
-            }
+            let input = liquidity_provider.input_amount(&output).ok()?;
+            let surplus = new_x - *input.amount.as_u64() as i64;
+
+            Some(SurplusResult::new(entry.state, new_x, new_y, surplus))
         }
         Ordering::Equal => Some(SurplusResult::new(entry.state, new_x, new_y, new_x)),
     }
