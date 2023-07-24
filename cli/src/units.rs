@@ -1,12 +1,12 @@
 use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 use ergo_lib::{ergo_chain_types::Digest32, ergotree_ir::chain::token::TokenId};
-use fraction::{BigFraction, ToPrimitive};
+use fraction::{GenericFraction, ToPrimitive};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub type Fraction = BigFraction;
+pub type Fraction = GenericFraction<u128>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TokenInfo {
@@ -161,7 +161,7 @@ impl<'a> Price<'a> {
     pub fn format(&self) -> String {
         format!(
             "{0:.1$} {2}/{3}",
-            &self.price * Fraction::new(self.base.base_amount(), self.quote.base_amount()),
+            self.price * Fraction::new(self.base.base_amount(), self.quote.base_amount()),
             self.quote.decimals() as usize,
             self.base.name(),
             self.quote.name()
@@ -170,7 +170,7 @@ impl<'a> Price<'a> {
 
     pub fn convert_price(&self, other: &UnitAmount) -> Option<UnitAmount> {
         if self.base == *other.unit() {
-            let amount = &self.price * other.amount;
+            let amount = self.price * other.amount;
             Some(UnitAmount::new(
                 self.quote,
                 amount.floor().to_u64().unwrap_or_default(),
@@ -188,7 +188,7 @@ impl<'a> Price<'a> {
     }
 
     pub fn price(&self) -> Fraction {
-        &self.price * Fraction::new(self.base.base_amount(), self.quote.base_amount())
+        self.price * Fraction::new(self.base.base_amount(), self.quote.base_amount())
     }
 }
 

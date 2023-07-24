@@ -132,7 +132,7 @@ impl IntoIterator for GridPriceRange<'_> {
     fn into_iter(self) -> Self::IntoIter {
         let start = self.start.price();
         let stop = self.stop.price();
-        let step = (&stop - &start) / self.num_orders;
+        let step = (stop - start) / self.num_orders;
         GridPriceIterator {
             base: start,
             current: 0,
@@ -157,8 +157,8 @@ impl Iterator for GridPriceIterator {
             return None;
         }
 
-        let lo = &self.base + &self.step * self.current;
-        let hi = &self.base + &self.step * (self.current + 1);
+        let lo = self.base + self.step * self.current;
+        let hi = self.base + self.step * (self.current + 1);
 
         self.current += 1;
         // return the reciprocal of the fraction to get the price
@@ -337,7 +337,7 @@ where
     let initial_orders: GridOrderEntries = range
         .into_iter()
         .map(|(bid, ask)| {
-            let amount = grid_value_fn(bid.clone())?;
+            let amount = grid_value_fn(bid)?;
 
             Result::<_, BuildNewGridTxError>::Ok(GridOrderEntry::new(
                 OrderState::Buy,
