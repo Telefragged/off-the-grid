@@ -77,7 +77,10 @@ impl NodeClient {
 
         Ok(boxes
             .into_iter()
-            .map(|wb| WalletBox::new(wb.ergo_box))
+            .map(|wb| {
+                let address = Address::recreate_from_ergo_tree(&wb.ergo_box.ergo_tree).unwrap();
+                WalletBox::new(wb.ergo_box, address)
+            })
             .collect())
     }
 

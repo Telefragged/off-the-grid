@@ -1,4 +1,4 @@
-use ergo_lib::ergotree_ir::chain::ergo_box::ErgoBox;
+use ergo_lib::{ergotree_ir::chain::ergo_box::ErgoBox, wallet::box_selector::ErgoBoxId};
 use std::hash::{Hash, Hasher};
 
 use crate::units::TokenStore;
@@ -62,5 +62,11 @@ where
 
     fn assets<'a>(&self, tokens: &'a TokenStore) -> BoxAssetDisplay<'a> {
         self.value.assets(tokens)
+    }
+}
+
+impl<T> ErgoBoxId for TrackedBox<T> {
+    fn box_id(&self) -> ergo_lib::ergotree_ir::chain::ergo_box::BoxId {
+        self.ergo_box.box_id()
     }
 }

@@ -2,27 +2,26 @@ use std::iter::once;
 
 use anyhow::{anyhow, Context};
 use clap::{ArgGroup, Parser};
-use colored::Colorize;
 use ergo_lib::{
-    chain::transaction::{unsigned::UnsignedTransaction, TransactionError, UnsignedInput},
+    chain::transaction::TransactionError,
     ergo_chain_types::EcPoint,
-    ergotree_ir::chain::{
-        address::Address,
-        ergo_box::{
-            box_value::{BoxValue, BoxValueError},
-            ErgoBox, ErgoBoxCandidate, NonMandatoryRegisters,
+    ergotree_ir::{
+        chain::{
+            address::Address,
+            ergo_box::{
+                box_value::{BoxValue, BoxValueError},
+                ErgoBox,
+            },
+            token::{TokenAmount, TokenAmountError, TokenId},
         },
-        token::{TokenAmount, TokenAmountError, TokenId},
+        serialization::SigmaParsingError,
     },
-    wallet::{
-        box_selector::{BoxSelector, BoxSelectorError, ErgoBoxAssetsData, SimpleBoxSelector},
-        miner_fee::MINERS_FEE_ADDRESS,
-    },
+    wallet::box_selector::{BoxSelector, BoxSelectorError, ErgoBoxAssetsData, SimpleBoxSelector},
 };
 use num_traits::ToPrimitive;
 use off_the_grid::{
     boxes::{
-        describe_box::{BoxAssetDisplay, ErgoBoxDescriptors},
+        describe_box::ErgoBoxDescriptors,
         liquidity_box::{LiquidityProvider, LiquidityProviderError},
         tracked_box::TrackedBox,
         wallet_box::WalletBox,
@@ -33,20 +32,15 @@ use off_the_grid::{
     },
     node::client::NodeClient,
     spectrum::pool::SpectrumPool,
-    units::{Fraction, Price, TokenStore, Unit, UnitAmount, ERG_UNIT},
+    units::{Fraction, Price, TokenStore, Unit, ERG_UNIT},
 };
-use tabled::{
-    row,
-    settings::{
-        object::{Columns, Rows},
-        Alignment, Disable, Format, Modify, Style,
-    },
-    Table, Tabled,
-};
+use tabled::{Table, Tabled};
 use thiserror::Error;
 use tokio::try_join;
 
-use crate::scan_config::ScanConfig;
+use crate::{commands::grid::SummarizedOutput, scan_config::ScanConfig};
+
+use super::{SummarizedInput, SummarizedTransaction, MinerFeeValue, TryIntoErgoBoxCandidate};
 
 #[derive(Parser)]
 #[command(group(
@@ -183,6 +177,8 @@ pub enum BuildNewGridTxError {
     Transaction(#[from] TransactionError),
     #[error("Invalid fraction: {0}")]
     InvalidFraction(Fraction),
+    #[error(transparent)]
+    SigmaParsing(#[from] SigmaParsingError),
 }
 
 pub async fn handle_grid_create(
@@ -300,17 +296,20 @@ pub async fn handle_grid_create(
         wallet_boxes,
         grid_identity,
     )
-    .context("Creating grid transaction")?;
+    .context("Building grid transaction")?;
+
+    let described_tx = grid_tx_data.into_described_tx(&token_store)?;
 
     if submit {
-        let tx = grid_tx_data.try_into()?;
+        let tx = described_tx.try_into()?;
 
         let signed = node_client.wallet_transaction_sign(&tx).await?;
 
         let tx_id = node_client.transaction_submit(&signed).await?;
         println!("Transaction submitted: {:?}", tx_id);
     } else {
-        print_grid_tx_data_summary(&grid_tx_data, &token_store);
+        let tx_table: Table = described_tx.into();
+        println!("{}", tx_table);
     }
 
     Ok(())
@@ -376,37 +375,9 @@ where
             LiquidityData::WithoutLiquidity => 0,
         }
     }
-
-    pub fn input(&self) -> Option<&TrackedBox<T>> {
-        match self {
-            LiquidityData::WithLiquidity { input, output: _ } => Some(input),
-            LiquidityData::WithoutLiquidity => None,
-        }
-    }
-
-    pub fn output(&self) -> Option<&T> {
-        match self {
-            LiquidityData::WithLiquidity { input: _, output } => Some(output),
-            LiquidityData::WithoutLiquidity => None,
-        }
-    }
-}
-
-struct MinerFeeValue(pub BoxValue);
-
-impl ErgoBoxDescriptors for MinerFeeValue {
-    fn box_name(&self) -> String {
-        "Miner fee".to_string()
-    }
-
-    fn assets<'a>(&self, _: &'a TokenStore) -> BoxAssetDisplay<'a> {
-        let amount = UnitAmount::new(*ERG_UNIT, *self.0.as_u64());
-        BoxAssetDisplay::Single(amount)
-    }
 }
 
 struct NewGridTxData<T: LiquidityProvider> {
-    owner_address: Address,
     liquidity_data: LiquidityData<T>,
     selected_boxes: Vec<WalletBox<ErgoBox>>,
     change_boxes: Vec<WalletBox<ErgoBoxAssetsData>>,
@@ -416,114 +387,67 @@ struct NewGridTxData<T: LiquidityProvider> {
 
 impl<T> NewGridTxData<T>
 where
-    T: LiquidityProvider + ErgoBoxDescriptors,
+    T: LiquidityProvider + ErgoBoxDescriptors + TryIntoErgoBoxCandidate,
+    <T as TryIntoErgoBoxCandidate>::Error: Into<BuildNewGridTxError>,
 {
-    pub fn iter_input_descriptions(&self) -> impl Iterator<Item = &dyn ErgoBoxDescriptors> {
-        let liquidity_iter = self
-            .liquidity_data
-            .input()
-            .into_iter()
-            .map(|input| input as &dyn ErgoBoxDescriptors);
-
-        liquidity_iter
-            .chain(
-                self.selected_boxes
-                    .iter()
-                    .map(|input| input as &dyn ErgoBoxDescriptors),
-            )
-            .fuse()
-    }
-
-    pub fn iter_output_descriptions(&self) -> impl Iterator<Item = &dyn ErgoBoxDescriptors> {
-        let liquidity_iter = self
-            .liquidity_data
-            .output()
-            .into_iter()
-            .map(|output| output as &dyn ErgoBoxDescriptors);
-
-        liquidity_iter
-            .chain(once(&self.grid_output as &dyn ErgoBoxDescriptors))
-            .chain(
-                self.change_boxes
-                    .iter()
-                    .map(|output| output as &dyn ErgoBoxDescriptors),
-            )
-            .chain(once(&self.fee_value as &dyn ErgoBoxDescriptors))
-            .fuse()
-    }
-}
-
-impl<T> TryFrom<NewGridTxData<T>> for UnsignedTransaction
-where
-    T: LiquidityProvider,
-{
-    type Error = BuildNewGridTxError;
-
-    fn try_from(value: NewGridTxData<T>) -> Result<Self, Self::Error> {
-        let creation_height = value
+    pub fn into_described_tx(
+        self,
+        token_store: &TokenStore,
+    ) -> Result<SummarizedTransaction, BuildNewGridTxError> {
+        let creation_height = self
             .selected_boxes
             .iter()
-            .map(|input| input.0.creation_height)
+            .map(|input| input.assets.creation_height)
+            .chain(once(self.liquidity_data.creation_height()))
             .max()
-            .unwrap_or_else(|| value.liquidity_data.creation_height());
+            .unwrap_or(0);
 
-        let (liquidity_input, liquidity_output) = match value.liquidity_data {
+        let (liquidity_input, liquidity_output) = match self.liquidity_data {
             LiquidityData::WithLiquidity {
                 input: liquidity_box_input,
                 output,
             } => {
-                let input = liquidity_box_input.ergo_box.into();
+                let input = SummarizedInput::new(liquidity_box_input, token_store);
 
-                let output_candidate = output.into_box_candidate(creation_height)?;
+                let output_candidate = SummarizedOutput::new(output, token_store, creation_height)
+                    .map_err(|e| e.into())?;
 
                 (Some(input), Some(output_candidate))
             }
             LiquidityData::WithoutLiquidity => (None, None),
         };
 
-        let inputs: Vec<UnsignedInput> = value
+        let selected_as_inputs = self
             .selected_boxes
             .into_iter()
-            .map(|input| input.into_inner().into())
-            .chain(liquidity_input)
+            .map(|b| SummarizedInput::new(b, token_store));
+
+        let inputs: Vec<_> = liquidity_input
+            .into_iter()
+            .chain(selected_as_inputs)
             .collect();
 
-        let grid_output = value.grid_output.into_box_candidate(creation_height)?;
+        let change_outputs = self.change_boxes.into_iter().map(|b| {
+            SummarizedOutput::new(b, token_store, creation_height).map_err(BuildNewGridTxError::from)
+        });
 
-        let change_outputs = value
-            .change_boxes
+        let fee_output = SummarizedOutput::new(self.fee_value, token_store, creation_height)
+            .expect("Fee conversion cannot fail");
+
+        let grid_output = SummarizedOutput::new(self.grid_output, token_store, creation_height)?;
+
+        let outputs: Result<Vec<_>, _> = liquidity_output
             .into_iter()
-            .map(|assets| ErgoBoxCandidate {
-                value: assets.0.value,
-                ergo_tree: value
-                    .owner_address
-                    .script()
-                    .expect("Address was already parsed"),
-                tokens: assets.0.tokens,
-                additional_registers: NonMandatoryRegisters::empty(),
-                creation_height,
-            });
-
-        let fee_output = ErgoBoxCandidate {
-            value: value.fee_value.0,
-            ergo_tree: MINERS_FEE_ADDRESS.script().unwrap(),
-            tokens: None,
-            additional_registers: NonMandatoryRegisters::empty(),
-            creation_height,
-        };
-
-        let output_candidates: Vec<ErgoBoxCandidate> = liquidity_output
-            .into_iter()
-            .chain(once(grid_output))
+            .map(Ok)
+            .chain(once(Ok(grid_output)))
             .chain(change_outputs)
-            .chain(once(fee_output))
+            .chain(once(Ok(fee_output)))
             .collect();
 
-        Ok(UnsignedTransaction::new_from_vec(
+        Ok(SummarizedTransaction {
             inputs,
-            vec![],
-            output_candidates,
-        )?)
+            outputs: outputs?,
+        })
     }
 }
 
@@ -535,53 +459,6 @@ struct BoxSummary {
     value: String,
     #[tabled(rename = "Tokens")]
     token: String,
-}
-
-impl BoxSummary {
-    pub fn new(desc: &dyn ErgoBoxDescriptors, token_store: &TokenStore) -> Self {
-        let (first_asset, second_asset) = desc.assets(token_store).strings(None);
-        Self {
-            box_type: desc.box_name(),
-            value: first_asset,
-            token: second_asset,
-        }
-    }
-}
-
-fn style_box_table<F>(table: &mut Table, formatting: F)
-where
-    F: FnMut(&str) -> String + Clone,
-{
-    table
-        .with(Style::empty())
-        .with(Modify::new(Columns::new(1..)).with(Alignment::right()))
-        .with(Modify::new(Rows::single(0)).with(Alignment::left()))
-        .with(Disable::row(Columns::single(0)))
-        .with(Modify::new(Columns::new(0..)).with(Format::content(formatting)));
-}
-
-fn print_grid_tx_data_summary<T>(data: &NewGridTxData<T>, token_store: &TokenStore)
-where
-    T: LiquidityProvider + ErgoBoxDescriptors,
-{
-    let input_descriptions = data
-        .iter_input_descriptions()
-        .map(|input| BoxSummary::new(input, token_store));
-
-    let output_descriptions = data
-        .iter_output_descriptions()
-        .map(|output| BoxSummary::new(output, token_store));
-
-    let mut input = Table::new(input_descriptions);
-    style_box_table(&mut input, |i| i.bright_red().to_string());
-
-    let mut output = Table::new(output_descriptions);
-    style_box_table(&mut output, |i| i.bright_green().to_string());
-
-    let mut combined = row![input, output];
-    combined.with(Style::empty());
-
-    println!("{}", combined);
 }
 
 /// Build a transaction that creates a new grid of orders
@@ -652,7 +529,7 @@ fn build_new_grid_data<T: LiquidityProvider>(
     let change_boxes = selection
         .change_boxes
         .into_iter()
-        .map(WalletBox::new)
+        .map(|cb| WalletBox::new(cb, owner_address.clone()))
         .collect();
 
     let fee_value = MinerFeeValue(fee_value);
@@ -663,7 +540,6 @@ fn build_new_grid_data<T: LiquidityProvider>(
         selected_boxes: selection.boxes.into(),
         change_boxes,
         fee_value,
-        owner_address,
     })
 }
 

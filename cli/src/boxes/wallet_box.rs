@@ -1,6 +1,6 @@
 use ergo_lib::{
-    ergotree_ir::chain::ergo_box::{box_value::BoxValue, BoxTokens},
-    wallet::box_selector::ErgoBoxAssets,
+    ergotree_ir::chain::{ergo_box::{box_value::BoxValue, BoxTokens, ErgoBox, BoxId}, address::Address},
+    wallet::box_selector::{ErgoBoxAssets, ErgoBoxId},
 };
 
 use crate::units::{TokenStore, UnitAmount, ERG_UNIT};
@@ -8,18 +8,21 @@ use crate::units::{TokenStore, UnitAmount, ERG_UNIT};
 use super::describe_box::{BoxAssetDisplay, ErgoBoxDescriptors};
 
 #[derive(Clone)]
-pub struct WalletBox<T: ErgoBoxAssets>(pub T);
+pub struct WalletBox<T: ErgoBoxAssets>
+{
+    pub assets: T,
+    pub address: Address,
+}
 
 impl<T> WalletBox<T>
 where
     T: ErgoBoxAssets + Clone,
 {
-    pub fn new(assets: T) -> Self {
-        Self(assets)
-    }
-
-    pub fn into_inner(self) -> T {
-        self.0
+    pub fn new(assets: T, address: Address) -> Self {
+        Self {
+            assets,
+            address,
+        }
     }
 }
 
@@ -28,11 +31,11 @@ where
     T: ErgoBoxAssets,
 {
     fn value(&self) -> BoxValue {
-        self.0.value()
+        self.assets.value()
     }
 
     fn tokens(&self) -> Option<BoxTokens> {
-        self.0.tokens()
+        self.assets.tokens()
     }
 }
 
@@ -49,5 +52,11 @@ where
         let num_tokens = self.tokens().map(|tokens| tokens.len()).unwrap_or(0);
 
         BoxAssetDisplay::Many(amount, num_tokens)
+    }
+}
+
+impl ErgoBoxId for WalletBox<ErgoBox> {
+    fn box_id(&self) -> BoxId {
+        self.assets.box_id()
     }
 }
