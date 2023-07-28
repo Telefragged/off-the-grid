@@ -3,24 +3,26 @@ use std::collections::{hash_map::Entry, HashMap};
 use anyhow::anyhow;
 use clap::{ArgGroup, Parser};
 use ergo_lib::{
-    chain::transaction::unsigned::UnsignedTransaction,
     ergo_chain_types::Digest32,
     ergotree_ir::chain::{
         address::Address,
-        ergo_box::{box_value::BoxValue, ErgoBoxCandidate, NonMandatoryRegisters},
+        ergo_box::box_value::BoxValue,
         token::{Token, TokenAmount, TokenId},
     },
-    wallet::miner_fee::MINERS_FEE_ADDRESS,
+    wallet::box_selector::ErgoBoxAssetsData,
 };
 use off_the_grid::{
-    boxes::tracked_box::TrackedBox,
+    boxes::{tracked_box::TrackedBox, wallet_box::WalletBox},
     grid::multigrid_order::{MultiGridOrder, OrderState},
     node::client::NodeClient,
     units::{Price, TokenStore, UnitAmount, ERG_UNIT},
 };
+use tabled::Table;
 
 use crate::scan_config::ScanConfig;
 use off_the_grid::units::Fraction;
+
+use super::{MinerFeeValue, SummarizedInput, SummarizedOutput, SummarizedTransaction};
 
 #[derive(Parser)]
 #[command(group(
@@ -39,9 +41,9 @@ pub struct RedeemOptions {
         short,
         long,
         help = "transaction fee value, in nanoERGs",
-        default_value_t = 1000000
+        default_value = "0.001"
     )]
-    fee: u64,
+    fee: String,
     #[clap(short = 'y', help = "Submit transaction")]
     submit: bool,
 }
@@ -59,7 +61,13 @@ pub async fn handle_grid_redeem(
         submit,
     } = options;
 
+    let token_store = TokenStore::load(None)?;
+
     let grid_identity = grid_identity.map(|i| i.into_bytes());
+
+    let fee_amount = ERG_UNIT
+        .str_amount(&fee)
+        .ok_or_else(|| anyhow!("Invalid fee value"))?;
 
     let token_id = token_id
         .map(|i| Digest32::try_from(i).map(|i| i.into()))
@@ -91,20 +99,25 @@ pub async fn handle_grid_redeem(
     let wallet_status = node_client.wallet_status().await?;
     wallet_status.error_if_locked()?;
 
-    let tx = build_redeem_multi_tx(
+    let fee_value: BoxValue = fee_amount.amount().try_into()?;
+
+    let redeem_data = build_redeem_multi_tx(
         grid_orders,
         node_client.wallet_status().await?.change_address()?,
-        fee.try_into()?,
-    )
-    .unwrap();
+        fee_value,
+    )?;
 
-    let signed = node_client.wallet_transaction_sign(&tx).await?;
+    let described_tx = redeem_data.into_described_tx(&token_store)?;
 
     if submit {
+        let tx = described_tx.try_into()?;
+        let signed = node_client.wallet_transaction_sign(&tx).await?;
+
         let tx_id = node_client.transaction_submit(&signed).await?;
         println!("Transaction submitted: {:?}", tx_id);
     } else {
-        println!("{}", serde_json::to_string_pretty(&signed)?);
+        let table: Table = described_tx.into();
+        println!("{}", table);
     }
 
     Ok(())
@@ -279,17 +292,54 @@ pub async fn handle_grid_details(
     }
 }
 
+struct RedeemMultiData {
+    orders: Vec<TrackedBox<MultiGridOrder>>,
+    change_boxes: Vec<WalletBox<ErgoBoxAssetsData>>,
+    fee_value: MinerFeeValue,
+}
+
+impl RedeemMultiData {
+    pub fn into_described_tx(
+        self,
+        token_store: &TokenStore,
+    ) -> anyhow::Result<SummarizedTransaction> {
+        let creation_height = self
+            .orders
+            .iter()
+            .map(|o| o.ergo_box.creation_height)
+            .max()
+            .unwrap_or(0);
+
+        let inputs = self
+            .orders
+            .into_iter()
+            .map(|i| SummarizedInput::new(i, token_store))
+            .collect();
+
+        let change_outputs = self
+            .change_boxes
+            .into_iter()
+            .map(|o| SummarizedOutput::new(o, token_store, creation_height));
+
+        let fee_output = SummarizedOutput::new(self.fee_value, token_store, creation_height)
+            .expect("Fee output");
+
+        let outputs: Result<Vec<_>, _> = change_outputs
+            .chain(std::iter::once(Ok(fee_output)))
+            .collect();
+
+        Ok(SummarizedTransaction {
+            inputs,
+            outputs: outputs?,
+        })
+    }
+}
+
 fn build_redeem_multi_tx(
     orders: Vec<TrackedBox<MultiGridOrder>>,
     change_address: Address,
     fee_value: BoxValue,
-) -> anyhow::Result<UnsignedTransaction> {
-    let creation_height = orders
-        .iter()
-        .map(|o| o.ergo_box.creation_height)
-        .max()
-        .unwrap_or(0);
-
+) -> anyhow::Result<RedeemMultiData> {
     let change_value = orders
         .iter()
         .map(|o| o.ergo_box.value.as_u64())
@@ -325,27 +375,17 @@ fn build_redeem_multi_tx(
         )
     };
 
-    let change_candidate = ErgoBoxCandidate {
-        value: change_value.try_into()?,
-        ergo_tree: change_address.script().unwrap(),
-        tokens,
-        additional_registers: NonMandatoryRegisters::empty(),
-        creation_height,
-    };
+    let change_asset_data = WalletBox::new(
+        ErgoBoxAssetsData {
+            value: change_value.try_into()?,
+            tokens,
+        },
+        change_address,
+    );
 
-    let fee_output_candidate = ErgoBoxCandidate {
-        value: fee_value,
-        ergo_tree: MINERS_FEE_ADDRESS.script().unwrap(),
-        tokens: None,
-        additional_registers: NonMandatoryRegisters::empty(),
-        creation_height,
-    };
-
-    let inputs = orders.into_iter().map(|o| o.ergo_box.into()).collect();
-
-    Ok(UnsignedTransaction::new_from_vec(
-        inputs,
-        vec![],
-        vec![change_candidate, fee_output_candidate],
-    )?)
+    Ok(RedeemMultiData {
+        orders,
+        change_boxes: vec![change_asset_data],
+        fee_value: MinerFeeValue(fee_value),
+    })
 }
