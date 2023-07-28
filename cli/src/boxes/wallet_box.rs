@@ -47,11 +47,21 @@ where
         "Wallet".to_string()
     }
 
-    fn assets<'a>(&self, _: &'a TokenStore) -> BoxAssetDisplay<'a> {
+    fn assets<'a>(&self, token_store: &'a TokenStore) -> BoxAssetDisplay<'a> {
         let amount = UnitAmount::new(*ERG_UNIT, *self.value().as_u64());
-        let num_tokens = self.tokens().map(|tokens| tokens.len()).unwrap_or(0);
 
-        BoxAssetDisplay::Many(amount, num_tokens)
+        match self.tokens().as_ref().map(|tokens| tokens.as_slice()) {
+            None => {
+                return BoxAssetDisplay::Single(amount);
+            }
+            Some([token]) => {
+                let unit = token_store.get_unit(&token.token_id);
+
+                let token_amount = UnitAmount::new(unit, *token.amount.as_u64());
+                return BoxAssetDisplay::Double(amount, token_amount);
+            }
+            Some(tokens) => BoxAssetDisplay::Many(amount, tokens.len()),
+        }
     }
 }
 
