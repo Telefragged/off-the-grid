@@ -19,7 +19,10 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::{
-    boxes::{describe_box::{BoxAssetDisplay, ErgoBoxDescriptors}, tracked_box::TrackedBox},
+    boxes::{
+        describe_box::{BoxAssetDisplay, ErgoBoxDescriptors},
+        tracked_box::TrackedBox,
+    },
     units::{Fraction, TokenStore, UnitAmount, ERG_UNIT},
 };
 
@@ -521,11 +524,9 @@ impl ErgoBoxDescriptors for MultiGridOrder {
             .sum::<u64>();
 
         let token_id = self.token_id;
-
         let token_info = tokens.get_unit(&token_id);
 
         let value_amount = UnitAmount::new(*ERG_UNIT, *self.value.as_u64());
-
         let total_tokens = UnitAmount::new(token_info, total_tokens);
 
         BoxAssetDisplay::Double(value_amount, total_tokens)

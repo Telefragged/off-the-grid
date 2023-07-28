@@ -1,5 +1,8 @@
 use ergo_lib::{
-    ergotree_ir::chain::{ergo_box::{box_value::BoxValue, BoxTokens, ErgoBox, BoxId}, address::Address},
+    ergotree_ir::chain::{
+        address::Address,
+        ergo_box::{box_value::BoxValue, BoxId, BoxTokens, ErgoBox},
+    },
     wallet::box_selector::{ErgoBoxAssets, ErgoBoxId},
 };
 
@@ -8,8 +11,7 @@ use crate::units::{TokenStore, UnitAmount, ERG_UNIT};
 use super::describe_box::{BoxAssetDisplay, ErgoBoxDescriptors};
 
 #[derive(Clone)]
-pub struct WalletBox<T: ErgoBoxAssets>
-{
+pub struct WalletBox<T: ErgoBoxAssets> {
     pub assets: T,
     pub address: Address,
 }
@@ -19,10 +21,7 @@ where
     T: ErgoBoxAssets + Clone,
 {
     pub fn new(assets: T, address: Address) -> Self {
-        Self {
-            assets,
-            address,
-        }
+        Self { assets, address }
     }
 }
 
