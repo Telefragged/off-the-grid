@@ -1,4 +1,5 @@
 mod create;
+mod redeem;
 mod subcommands;
 
 use clap::{Args, Subcommand};
@@ -35,7 +36,8 @@ use crate::scan_config::ScanConfig;
 
 use self::{
     create::{handle_grid_create, CreateOptions},
-    subcommands::{handle_grid_details, handle_grid_list, handle_grid_redeem, RedeemOptions},
+    redeem::{handle_grid_redeem, RedeemOptions},
+    subcommands::{handle_grid_details, handle_grid_list},
 };
 
 #[derive(Subcommand)]
