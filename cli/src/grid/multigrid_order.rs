@@ -619,3 +619,73 @@ pub mod arbitrary {
         }
     }
 }
+
+#[cfg(test)]
+pub mod tests {
+    use ergo_lib::{
+        ergo_chain_types::Digest32,
+        ergotree_interpreter::sigma_protocol::private_input::PrivateInput,
+        wallet::secret_key::SecretKey,
+    };
+    use proptest::{prelude::any, prop_compose, proptest};
+
+    use crate::spectrum::pool::{SpectrumPool, arbitrary::test_pool};
+
+    use super::{*, arbitrary::test_entries};
+
+    lazy_static! {
+        static ref GROUP_ELEMENT: EcPoint = {
+            let secret_key = SecretKey::random_dlog();
+
+            if let PrivateInput::DlogProverInput(dpi) = PrivateInput::from(secret_key) {
+                *dpi.public_image().h
+            } else {
+                panic!("Expected DlogProverInput")
+            }
+        };
+    }
+
+    prop_compose! {
+        fn multigrid()(entries in any::<GridOrderEntries>()) -> MultiGridOrder {
+            let mut asset_y_id = [0u8; 32];
+            asset_y_id[0] = 3;
+
+            let token_id: TokenId = Digest32::from(asset_y_id).into();
+            MultiGridOrder::new(GROUP_ELEMENT.clone(), token_id, entries, None).unwrap()
+        }
+    }
+
+    #[test]
+    fn fill_orders_token_oob() {
+        let pool = test_pool(3829747537295142317, 566054526045810730, 434);
+
+        let entries = test_entries(1, 2, 1, 1, vec![8657317510808965078]);
+
+        let mut asset_y_id = [0u8; 32];
+        asset_y_id[0] = 3;
+
+        let token_id: TokenId = Digest32::from(asset_y_id).into();
+
+        let order = MultiGridOrder::new(
+            GROUP_ELEMENT.clone(),
+            token_id,
+            entries,
+            None,
+        ).unwrap();
+
+        let refs = vec![&order];
+
+        let _ = pool.fill_orders(refs).expect("Failed to fill orders");
+
+    }
+
+    proptest!(
+        #[test]
+        fn fill_orders(pool in any::<SpectrumPool>(), orders in proptest::collection::vec(multigrid(), 1..=5)) {
+            let refs = orders.iter().collect();
+
+            // Just make sure we don't panic
+            let _ = pool.fill_orders(refs).expect("Failed to fill orders");
+        }
+    );
+}
