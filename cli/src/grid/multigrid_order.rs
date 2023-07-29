@@ -87,6 +87,9 @@ pub enum MultiGridOrderError {
 
     #[error("{0} when converting number")]
     TryFromIntError(#[from] std::num::TryFromIntError),
+
+    #[error("Value overflow")]
+    ValueOverflow,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -285,7 +288,8 @@ impl MultiGridOrder {
             .0
             .iter()
             .filter(|e| e.state == OrderState::Buy)
-            .fold(MIN_BOX_VALUE, |acc, e| acc + e.bid_value)
+            .try_fold(MIN_BOX_VALUE, |acc, e| acc.checked_add(e.bid_value))
+            .ok_or(MultiGridOrderError::ValueOverflow)?
             .try_into()?;
 
         Ok(Self {
