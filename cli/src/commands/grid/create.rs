@@ -75,8 +75,8 @@ pub struct CreateOptions {
     no_auto_fill: bool,
     #[clap(short = 'y', help = "Submit transaction")]
     submit: bool,
-    #[clap(short = 'i', long, help = "Grid group identity [default: random]")]
-    grid_identity: Option<String>,
+    #[clap(short = 'i', long, help = "Grid group identity")]
+    grid_identity: String,
 }
 
 fn grid_order_range_from_str(s: &str) -> Result<(String, String), String> {
@@ -260,15 +260,6 @@ pub async fn handle_grid_create(
         )
     } else {
         None
-    };
-
-    let grid_identity = if let Some(grid_identity) = grid_identity {
-        grid_identity
-    } else {
-        let mut generator = names::Generator::with_naming(names::Name::Numbered);
-        generator
-            .next()
-            .ok_or(anyhow!("Failed to generate grid identity"))?
     };
 
     let start: Fraction = range
