@@ -161,12 +161,12 @@ where
 {
     let (new_x, new_y) = match entry.state {
         OrderState::Buy => (
-            cur_x + entry.bid_value as i64,
-            cur_y - *entry.token_amount.as_u64() as i64,
+            cur_x.checked_add(entry.bid_value as i64)?,
+            cur_y.checked_sub(*entry.token_amount.as_u64() as i64)?,
         ),
         OrderState::Sell => (
-            cur_x - entry.ask_value as i64,
-            cur_y + *entry.token_amount.as_u64() as i64,
+            cur_x.checked_sub(entry.ask_value as i64)?,
+            cur_y.checked_add(*entry.token_amount.as_u64() as i64)?,
         ),
     };
 
@@ -179,7 +179,7 @@ where
                 .into();
 
             let output = liquidity_provider.output_amount(&input).ok()?;
-            let surplus = new_x + *output.amount.as_u64() as i64;
+            let surplus = new_x.checked_add(*output.amount.as_u64() as i64)?;
 
             Some(SurplusResult::new(entry.state, new_x, new_y, surplus))
         }
@@ -191,7 +191,7 @@ where
                 .into();
 
             let input = liquidity_provider.input_amount(&output).ok()?;
-            let surplus = new_x - *input.amount.as_u64() as i64;
+            let surplus = new_x.checked_sub(*input.amount.as_u64() as i64)?;
 
             Some(SurplusResult::new(entry.state, new_x, new_y, surplus))
         }
