@@ -229,6 +229,22 @@ where
                         .state_surplus(&self, liquidity_x_diff, liquidity_y_diff)
                         .map(|surplus_result| (state, surplus_result))
                 })
+                // Ensure that orders which have enough liquidity to overflow the liquidity
+                // provider swap does not prevent other orders from being matched.
+                // It is in practice impossible to make these as there can never be more than
+                // i64::MAX tokens for any single asset, but a malicious user might try to
+                // configure the grid to make this happen.
+                .filter(|(_, surplus_result)| {
+                    let y_overflow = (*self.asset_y().amount.as_u64() as i64)
+                        .checked_add(surplus_result.new_y)
+                        .is_none();
+
+                    let x_overflow = (*self.asset_x().amount.as_u64() as i64)
+                        .checked_add(surplus_result.new_x)
+                        .is_none();
+
+                    !y_overflow && !x_overflow
+                })
                 .max_by_key(|(_, surplus_result)| surplus_result.surplus);
 
             match best_order {
