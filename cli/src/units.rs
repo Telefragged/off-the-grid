@@ -122,14 +122,17 @@ impl<'a> Display for UnitAmount<'a> {
 
         f.pad_integral(true, "", &fraction_str)?;
 
-        match (f.alternate(), self.unit()) {
-            (false, Unit::Known(info)) => {
+        if f.alternate() {
+            return Ok(());
+        }
+
+        match self.unit() {
+            Unit::Known(info) => {
                 write!(f, " {}", info.name)
             }
-            (false, Unit::Unknown(token_id)) => {
+            Unit::Unknown(token_id) => {
                 write!(f, " {:?}", token_id)
             }
-            _ => Ok(()),
         }
     }
 }
