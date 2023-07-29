@@ -42,7 +42,7 @@ lazy_static! {
         N2T_POOL_ADDRESS.script().expect("Pool address is a valid script");
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug)]
 pub enum PoolType {
     N2T,
 }
@@ -87,7 +87,7 @@ pub enum SpectrumPoolError {
     TokenAmountError(#[from] TokenAmountError),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SpectrumPool {
     pub pool_nft: Token,
     pub asset_lp: Token,
@@ -283,12 +283,29 @@ impl ErgoBoxDescriptors for SpectrumPool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::SpectrumPool;
-    use crate::boxes::liquidity_box::LiquidityProvider;
+pub mod arbitrary {
+    use super::{PoolType, SpectrumPool};
     use ergo_lib::ergo_chain_types::Digest32;
+    use proptest::{
+        prelude::Arbitrary,
+        strategy::{BoxedStrategy, Strategy},
+    };
 
-    fn test_pool(x_amount: u64, y_amount: u64) -> SpectrumPool {
+    impl Arbitrary for SpectrumPool {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
+            let x_amount = 1..std::i64::MAX as u64;
+            let y_amount = 1..std::i64::MAX as u64;
+            let fee_num = 1..=1000;
+            (x_amount, y_amount, fee_num)
+                .prop_map(|(x_amount, y_amount, fee_num)| test_pool(x_amount, y_amount, fee_num))
+                .boxed()
+        }
+    }
+
+    pub fn test_pool(x_amount: u64, y_amount: u64, fee_num: i32) -> SpectrumPool {
         let mut pool_nft_id = [0u8; 32];
         pool_nft_id[0] = 1;
 
@@ -307,15 +324,20 @@ mod tests {
                 y_amount.try_into().unwrap(),
             )
                 .into(),
-            fee_num: 998,
+            fee_num,
             fee_denom: 1000,
-            pool_type: super::PoolType::N2T,
+            pool_type: PoolType::N2T,
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{boxes::liquidity_box::LiquidityProvider, spectrum::pool::arbitrary::test_pool};
 
     #[test]
     fn swap_output() {
-        let pool = test_pool(1000000000, 1000);
+        let pool = test_pool(1000000000, 1000, 998);
 
         let mut input = pool.asset_x.clone();
         input.amount = 500000000.try_into().unwrap();
