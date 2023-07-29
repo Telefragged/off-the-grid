@@ -35,7 +35,10 @@ pub enum ErgoNodeError {
     ReqwestError(#[from] reqwest::Error),
 
     #[error("API error: {api_error} at {request_url}")]
-    ApiError{ api_error: ApiError, request_url: String },
+    ApiError {
+        api_error: ApiError,
+        request_url: String,
+    },
 }
 
 pub struct NodeClient {
@@ -68,7 +71,10 @@ impl NodeClient {
 
         match parsed {
             ApiResponse::Ok(t) => Ok(t),
-            ApiResponse::Err(api_error) => Err(ErgoNodeError::ApiError{ api_error, request_url }),
+            ApiResponse::Err(api_error) => Err(ErgoNodeError::ApiError {
+                api_error,
+                request_url,
+            }),
         }
     }
 
@@ -94,7 +100,10 @@ impl NodeClient {
 
         match parsed {
             ApiResponse::Ok(t) => Ok(t),
-            ApiResponse::Err(api_error) => Err(ErgoNodeError::ApiError{ api_error, request_url }),
+            ApiResponse::Err(api_error) => Err(ErgoNodeError::ApiError {
+                api_error,
+                request_url,
+            }),
         }
     }
 }

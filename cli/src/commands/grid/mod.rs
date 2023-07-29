@@ -203,15 +203,9 @@ pub(super) struct SummarizedTransaction {
 
 impl From<SummarizedTransaction> for Table {
     fn from(value: SummarizedTransaction) -> Self {
-        let input_descriptions = value
-            .inputs
-            .into_iter()
-            .map(|input| input.summary);
+        let input_descriptions = value.inputs.into_iter().map(|input| input.summary);
 
-        let output_descriptions = value
-            .outputs
-            .into_iter()
-            .map(|output| output.summary);
+        let output_descriptions = value.outputs.into_iter().map(|output| output.summary);
 
         let mut input = Table::new(input_descriptions);
         style_box_table(&mut input, |i| i.bright_red().to_string());
@@ -229,11 +223,7 @@ impl TryFrom<SummarizedTransaction> for UnsignedTransaction {
     type Error = TransactionError;
 
     fn try_from(value: SummarizedTransaction) -> Result<Self, Self::Error> {
-        let inputs = value
-            .inputs
-            .into_iter()
-            .map(|input| input.input)
-            .collect();
+        let inputs = value.inputs.into_iter().map(|input| input.input).collect();
 
         let outputs = value
             .outputs

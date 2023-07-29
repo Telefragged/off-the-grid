@@ -40,7 +40,7 @@ use tokio::try_join;
 
 use crate::{commands::grid::SummarizedOutput, scan_config::ScanConfig};
 
-use super::{SummarizedInput, SummarizedTransaction, MinerFeeValue, TryIntoErgoBoxCandidate};
+use super::{MinerFeeValue, SummarizedInput, SummarizedTransaction, TryIntoErgoBoxCandidate};
 
 #[derive(Parser)]
 #[command(group(
@@ -428,7 +428,8 @@ where
             .collect();
 
         let change_outputs = self.change_boxes.into_iter().map(|b| {
-            SummarizedOutput::new(b, token_store, creation_height).map_err(BuildNewGridTxError::from)
+            SummarizedOutput::new(b, token_store, creation_height)
+                .map_err(BuildNewGridTxError::from)
         });
 
         let fee_output = SummarizedOutput::new(self.fee_value, token_store, creation_height)

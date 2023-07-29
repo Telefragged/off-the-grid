@@ -629,9 +629,9 @@ pub mod tests {
     };
     use proptest::{prelude::any, prop_compose, proptest};
 
-    use crate::spectrum::pool::{SpectrumPool, arbitrary::test_pool};
+    use crate::spectrum::pool::{arbitrary::test_pool, SpectrumPool};
 
-    use super::{*, arbitrary::test_entries};
+    use super::{arbitrary::test_entries, *};
 
     lazy_static! {
         static ref GROUP_ELEMENT: EcPoint = {
@@ -666,17 +666,11 @@ pub mod tests {
 
         let token_id: TokenId = Digest32::from(asset_y_id).into();
 
-        let order = MultiGridOrder::new(
-            GROUP_ELEMENT.clone(),
-            token_id,
-            entries,
-            None,
-        ).unwrap();
+        let order = MultiGridOrder::new(GROUP_ELEMENT.clone(), token_id, entries, None).unwrap();
 
         let refs = vec![&order];
 
         let _ = pool.fill_orders(refs).expect("Failed to fill orders");
-
     }
 
     proptest!(
