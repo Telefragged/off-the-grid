@@ -98,7 +98,7 @@ pub enum OrderState {
     Sell,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct GridOrderEntry {
     pub state: OrderState,
     pub token_amount: TokenAmount,
@@ -168,7 +168,7 @@ impl GridOrderEntry {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GridOrderEntries(Vec<GridOrderEntry>);
 
 impl GridOrderEntries {
@@ -189,7 +189,7 @@ impl GridOrderEntries {
             .map(GridOrderEntry::from_register)
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(Self(entries))
+        Ok(Self::new(entries))
     }
 
     pub fn token_amount(&self) -> u64 {
@@ -268,7 +268,7 @@ impl From<Vec<GridOrderEntry>> for GridOrderEntries {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MultiGridOrder {
     owner_ec_point: EcPoint,
     pub metadata: Option<Vec<u8>>,
@@ -534,5 +534,88 @@ impl ErgoBoxDescriptors for MultiGridOrder {
         let total_tokens = UnitAmount::new(token_info, total_tokens);
 
         BoxAssetDisplay::Double(value_amount, total_tokens)
+    }
+}
+
+#[cfg(test)]
+pub mod arbitrary {
+    use crate::grid::multigrid_order::{GridOrderEntry, OrderState};
+
+    use super::GridOrderEntries;
+    use proptest::{
+        prelude::Arbitrary,
+        strategy::{BoxedStrategy, Just, Strategy},
+    };
+
+    pub(super) fn test_entries(
+        low: u64,
+        high: u64,
+        num_entries: usize,
+        mut num_sell_entries: usize,
+        token_amounts: Vec<u64>,
+    ) -> GridOrderEntries {
+        let step = (high - low) as usize / num_entries;
+
+        let entries = (low..high)
+            .step_by(step)
+            .zip(token_amounts)
+            .map(|(price, token_amount)| {
+                let state = if num_sell_entries > 0 {
+                    num_sell_entries -= 1;
+                    OrderState::Sell
+                } else {
+                    OrderState::Buy
+                };
+                GridOrderEntry {
+                    token_amount: token_amount
+                        .try_into()
+                        .expect("Constrained in the strategy"),
+                    state,
+                    bid_value: price,
+                    ask_value: price + step as u64,
+                }
+            })
+            .collect();
+
+        GridOrderEntries::new(entries)
+    }
+
+    impl Arbitrary for GridOrderEntries {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
+            const MAX_ENTRIES: u64 = 50;
+
+            const MAX_VALUE: u64 = std::i64::MAX as u64;
+            const MAX_TOKENS: u64 = std::i64::MAX as u64;
+
+            // The value of a multigrid order is determined by the sum of the bid values for all
+            // orders in the BUY state. To prevent overflow when generating random values, we
+            // constrain the upper bound of the value to be less than the max allowed value divided
+            // by the max number of entries.
+            let upper_bound = MAX_VALUE / (MAX_ENTRIES + 1);
+            let num_entries = 1usize..=MAX_ENTRIES as usize;
+            let low = 1u64..(upper_bound - MAX_ENTRIES);
+            (num_entries, low)
+                .prop_flat_map(move |(num_entries, low)| {
+                    let high = (low + num_entries as u64)..upper_bound;
+                    let token_amounts = proptest::collection::vec(1u64..=MAX_TOKENS, num_entries);
+                    let num_sell_entries = 0..=num_entries;
+                    (
+                        Just(num_entries),
+                        num_sell_entries,
+                        Just(low),
+                        high,
+                        token_amounts,
+                    )
+                })
+                .prop_map(
+                    |(num_entries, num_sell_entries, low, high, token_amounts)| {
+                        test_entries(low, high, num_entries, num_sell_entries, token_amounts)
+                    },
+                )
+                .boxed()
+        }
     }
 }
