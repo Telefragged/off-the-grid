@@ -52,19 +52,20 @@ use super::{
 pub struct CreateOptions {
     #[clap(short = 't', long, help = "TokenID of the token to be traded")]
     token_id: String,
-    #[clap(
-        short = 'n',
-        long,
-        help = "Total amount of tokens to be traded",
-        group = "amount"
-    )]
+    /// Total amount of tokens in the grid.
+    /// If specified, the number of tokens traded in each order will be calculated as
+    /// token_amount / num_orders
+    #[clap(short = 'n', long, group = "amount")]
     token_amount: Option<String>,
-    #[clap(short = 'v', long, help = "Total value of the grid", group = "amount")]
+    /// Total value of the grid.
+    /// If specified, the number of tokens traded in each order will be calculated as
+    /// (total_value / num_orders) / bid_price
+    #[clap(short = 'v', long, group = "amount")]
     total_value: Option<String>,
     #[clap(
         short = 'r',
         long,
-        help = "Range of the grid, in the form start..stop",
+        help = "Range of the grid, in the form start-stop",
         value_parser = grid_order_range_from_str
     )]
     range: (String, String),
@@ -79,7 +80,7 @@ pub struct CreateOptions {
 }
 
 fn grid_order_range_from_str(s: &str) -> Result<(String, String), String> {
-    let parts: Vec<&str> = s.split("..").collect();
+    let parts: Vec<&str> = s.split('-').collect();
     if let [start, stop] = parts.as_slice() {
         Ok((start.to_string(), stop.to_string()))
     } else {
