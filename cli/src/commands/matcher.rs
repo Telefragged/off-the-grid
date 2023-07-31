@@ -167,7 +167,7 @@ pub async fn handle_matcher_command(
 ) -> anyhow::Result<()> {
     let scan_config = ScanConfig::try_create(matcher_command.scan_config, None)?;
     let matcher_config = MatcherConfig::try_create(matcher_command.matcher_config)?;
-    let matcher_interval = Duration::from_secs_f64(matcher_config.matcher_interval.unwrap_or(10.0));
+    let matcher_interval = Duration::from_secs_f64(matcher_config.interval.unwrap_or(10.0));
     let address_encoder = AddressEncoder::new(NetworkPrefix::Mainnet);
 
     let reward_address = match matcher_config.reward_address {

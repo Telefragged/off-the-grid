@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MatcherConfig {
     pub reward_address: Option<String>,
-    pub matcher_interval: Option<f64>,
+    pub interval: Option<f64>,
 }
 
 impl MatcherConfig {
