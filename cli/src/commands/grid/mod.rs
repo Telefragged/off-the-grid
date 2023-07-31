@@ -2,6 +2,8 @@ mod create;
 mod redeem;
 mod subcommands;
 
+use std::io::Write;
+
 use clap::{Args, Subcommand};
 use colored::Colorize;
 use ergo_lib::{
@@ -15,12 +17,12 @@ use ergo_lib::{
 use off_the_grid::{
     boxes::{
         describe_box::{BoxAssetDisplay, ErgoBoxDescriptors},
-        liquidity_box::{LiquidityProvider, LiquidityProviderError},
+        liquidity_box::LiquidityProvider,
         wallet_box::WalletBox,
     },
     grid::multigrid_order::{MultiGridOrder, MultiGridOrderError},
     node::client::NodeClient,
-    spectrum::pool::SpectrumPool,
+    spectrum::pool::{SpectrumPool, SpectrumSwapError},
     units::{TokenStore, UnitAmount, ERG_UNIT},
 };
 use tabled::{
@@ -68,15 +70,72 @@ pub async fn handle_grid_command(
     orders_command: GridCommand,
 ) -> anyhow::Result<()> {
     let scan_config = ScanConfig::try_create(orders_command.scan_config, None)?;
+    let token_store = TokenStore::load(None)?;
 
     match orders_command.command {
-        Commands::Create(options) => handle_grid_create(node_client, scan_config, options).await,
-        Commands::Redeem(options) => handle_grid_redeem(node_client, scan_config, options).await,
+        Commands::Create(options) => {
+            let tx = handle_grid_create(&node_client, scan_config, &token_store, options).await?;
+            transaction_query_loop(&node_client, &token_store, tx).await
+        }
+        Commands::Redeem(options) => {
+            let data = handle_grid_redeem(&node_client, scan_config, options).await?;
+            transaction_query_loop(&node_client, &token_store, data).await
+        }
         Commands::List { token_id } => handle_grid_list(node_client, scan_config, token_id).await,
         Commands::Details { grid_identity } => {
             handle_grid_details(node_client, scan_config, grid_identity).await
         }
     }
+}
+
+async fn transaction_query_loop<T>(
+    node_client: &NodeClient,
+    token_store: &TokenStore,
+    tx_data: T,
+) -> anyhow::Result<()>
+where
+    T: IntoSummarizedTransaction,
+    T::Error: std::error::Error + Send + Sync + 'static,
+{
+    let tx = tx_data.into_summarized_transaction(token_store)?;
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+
+    let mut line = String::new();
+
+    let table: Table = (&tx).into();
+
+    println!("{}\n", table);
+
+    loop {
+        print!("Submit transaction? [Y/n] ");
+
+        stdout.flush()?;
+        stdin.read_line(&mut line)?;
+
+        match line.trim() {
+            "Y" => {
+                let tx = tx.try_into()?;
+
+                let signed = node_client.wallet_transaction_sign(&tx).await?;
+
+                let tx_id = node_client.transaction_submit(&signed).await?;
+                println!("Transaction submitted: {}", String::from(tx_id));
+
+                break;
+            }
+            "n" => {
+                println!("Transaction cancelled!");
+                break;
+            }
+            _ => {
+                println!("Invalid input, please try again");
+                line.clear();
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub trait TryIntoErgoBoxCandidate {
@@ -96,14 +155,13 @@ where
         self,
         creation_height: u32,
     ) -> Result<ErgoBoxCandidate, Self::Error> {
-        let candidate = ErgoBoxCandidate {
+        Ok(ErgoBoxCandidate {
             value: self.assets.value(),
             ergo_tree: self.address.script()?,
             tokens: self.assets.tokens(),
             additional_registers: NonMandatoryRegisters::empty(),
             creation_height,
-        };
-        Ok(candidate)
+        })
     }
 }
 
@@ -119,7 +177,7 @@ impl TryIntoErgoBoxCandidate for MultiGridOrder {
 }
 
 impl TryIntoErgoBoxCandidate for SpectrumPool {
-    type Error = LiquidityProviderError;
+    type Error = SpectrumSwapError;
 
     fn into_ergo_box_candidate(
         self,
@@ -201,11 +259,20 @@ pub(super) struct SummarizedTransaction {
     pub outputs: Vec<SummarizedOutput>,
 }
 
-impl From<SummarizedTransaction> for Table {
-    fn from(value: SummarizedTransaction) -> Self {
-        let input_descriptions = value.inputs.into_iter().map(|input| input.summary);
+trait IntoSummarizedTransaction {
+    type Error;
 
-        let output_descriptions = value.outputs.into_iter().map(|output| output.summary);
+    fn into_summarized_transaction(
+        self,
+        token_store: &TokenStore,
+    ) -> Result<SummarizedTransaction, Self::Error>;
+}
+
+impl From<&'_ SummarizedTransaction> for Table {
+    fn from(value: &SummarizedTransaction) -> Self {
+        let input_descriptions = value.inputs.iter().map(|input| &input.summary);
+
+        let output_descriptions = value.outputs.iter().map(|output| &output.summary);
 
         let mut input = Table::new(input_descriptions);
         style_box_table(&mut input, |i| i.bright_red().to_string());

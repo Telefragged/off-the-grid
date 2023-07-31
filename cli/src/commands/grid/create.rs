@@ -21,26 +21,27 @@ use ergo_lib::{
 use num_traits::ToPrimitive;
 use off_the_grid::{
     boxes::{
-        describe_box::ErgoBoxDescriptors,
-        liquidity_box::{LiquidityProvider, LiquidityProviderError},
-        tracked_box::TrackedBox,
-        wallet_box::WalletBox,
+        describe_box::ErgoBoxDescriptors, liquidity_box::LiquidityProvider,
+        tracked_box::TrackedBox, wallet_box::WalletBox,
     },
     grid::multigrid_order::{
         FillMultiGridOrders, GridOrderEntries, GridOrderEntry, MultiGridOrder, MultiGridOrderError,
         OrderState,
     },
     node::client::NodeClient,
-    spectrum::pool::SpectrumPool,
+    spectrum::pool::{SpectrumPool, SpectrumSwapError},
     units::{Fraction, Price, TokenStore, Unit, ERG_UNIT},
 };
-use tabled::{Table, Tabled};
+use tabled::Tabled;
 use thiserror::Error;
 use tokio::try_join;
 
 use crate::{commands::grid::SummarizedOutput, scan_config::ScanConfig};
 
-use super::{MinerFeeValue, SummarizedInput, SummarizedTransaction, TryIntoErgoBoxCandidate};
+use super::{
+    IntoSummarizedTransaction, MinerFeeValue, SummarizedInput, SummarizedTransaction,
+    TryIntoErgoBoxCandidate,
+};
 
 #[derive(Parser)]
 #[command(group(
@@ -73,8 +74,6 @@ pub struct CreateOptions {
     fee: String,
     #[clap(long, help = "Disable auto filling the grid orders")]
     no_auto_fill: bool,
-    #[clap(short = 'y', help = "Submit transaction")]
-    submit: bool,
     #[clap(short = 'i', long, help = "Grid group identity")]
     grid_identity: String,
 }
@@ -162,9 +161,12 @@ impl Iterator for GridPriceIterator {
 }
 
 #[derive(Error, Debug)]
-pub enum BuildNewGridTxError {
+pub enum BuildNewGridTxError<T>
+where
+    T: std::error::Error,
+{
     #[error(transparent)]
-    LiquidityProvider(#[from] LiquidityProviderError),
+    Liquidity(T),
     #[error(transparent)]
     TokenAmount(#[from] TokenAmountError),
     #[error(transparent)]
@@ -181,11 +183,18 @@ pub enum BuildNewGridTxError {
     SigmaParsing(#[from] SigmaParsingError),
 }
 
+impl From<SpectrumSwapError> for BuildNewGridTxError<SpectrumSwapError> {
+    fn from(value: SpectrumSwapError) -> Self {
+        Self::Liquidity(value)
+    }
+}
+
 pub async fn handle_grid_create(
-    node_client: NodeClient,
+    node_client: &NodeClient,
     scan_config: ScanConfig,
+    token_store: &TokenStore,
     options: CreateOptions,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<NewGridTxData<SpectrumPool>> {
     let CreateOptions {
         token_id,
         token_amount,
@@ -194,11 +203,8 @@ pub async fn handle_grid_create(
         num_orders,
         fee,
         no_auto_fill,
-        submit,
         grid_identity,
     } = options;
-
-    let token_store = TokenStore::load(None)?;
 
     let erg_unit = *ERG_UNIT;
 
@@ -289,38 +295,28 @@ pub async fn handle_grid_create(
     )
     .context("Building grid transaction")?;
 
-    let described_tx = grid_tx_data.into_described_tx(&token_store)?;
-
-    if submit {
-        let tx = described_tx.try_into()?;
-
-        let signed = node_client.wallet_transaction_sign(&tx).await?;
-
-        let tx_id = node_client.transaction_submit(&signed).await?;
-        println!("Transaction submitted: {:?}", tx_id);
-    } else {
-        let tx_table: Table = described_tx.into();
-        println!("{}", tx_table);
-    }
-
-    Ok(())
+    Ok(grid_tx_data)
 }
 
-fn fraction_to_u64(fraction: Fraction) -> Result<u64, BuildNewGridTxError> {
+fn fraction_to_u64<E>(fraction: Fraction) -> Result<u64, BuildNewGridTxError<E>>
+where
+    E: std::error::Error,
+{
     fraction
         .to_u64()
         .ok_or(BuildNewGridTxError::InvalidFraction(fraction))
 }
 
-fn new_multi_order<F>(
+fn new_multi_order<F, E>(
     range: GridPriceRange,
     token_id: TokenId,
     grid_identity: String,
     owner_ec_point: EcPoint,
     grid_value_fn: F,
-) -> Result<MultiGridOrder, BuildNewGridTxError>
+) -> Result<MultiGridOrder, BuildNewGridTxError<E>>
 where
-    F: Fn(Fraction) -> Result<u64, BuildNewGridTxError>,
+    F: Fn(Fraction) -> Result<u64, BuildNewGridTxError<E>>,
+    E: std::error::Error,
 {
     let grid_identity = grid_identity.into_bytes();
 
@@ -329,7 +325,7 @@ where
         .map(|(bid, ask)| {
             let amount = grid_value_fn(bid)?;
 
-            Result::<_, BuildNewGridTxError>::Ok(GridOrderEntry::new(
+            Result::<_, BuildNewGridTxError<E>>::Ok(GridOrderEntry::new(
                 OrderState::Buy,
                 amount.try_into()?,
                 fraction_to_u64((bid * amount).floor())?,
@@ -368,7 +364,7 @@ where
     }
 }
 
-struct NewGridTxData<T: LiquidityProvider> {
+pub struct NewGridTxData<T: LiquidityProvider> {
     liquidity_data: LiquidityData<T>,
     selected_boxes: Vec<WalletBox<ErgoBox>>,
     change_boxes: Vec<WalletBox<ErgoBoxAssetsData>>,
@@ -376,15 +372,18 @@ struct NewGridTxData<T: LiquidityProvider> {
     fee_value: MinerFeeValue,
 }
 
-impl<T> NewGridTxData<T>
+impl<T> IntoSummarizedTransaction for NewGridTxData<T>
 where
     T: LiquidityProvider + ErgoBoxDescriptors + TryIntoErgoBoxCandidate,
-    <T as TryIntoErgoBoxCandidate>::Error: Into<BuildNewGridTxError>,
+    <T as TryIntoErgoBoxCandidate>::Error:
+        Into<BuildNewGridTxError<<T as LiquidityProvider>::Error>>,
 {
-    pub fn into_described_tx(
+    type Error = BuildNewGridTxError<<T as LiquidityProvider>::Error>;
+
+    fn into_summarized_transaction(
         self,
         token_store: &TokenStore,
-    ) -> Result<SummarizedTransaction, BuildNewGridTxError> {
+    ) -> Result<SummarizedTransaction, Self::Error> {
         let creation_height = self
             .selected_boxes
             .iter()
@@ -464,16 +463,18 @@ fn build_new_grid_data<T: LiquidityProvider>(
     fee_value: BoxValue,
     wallet_boxes: Vec<WalletBox<ErgoBox>>,
     grid_identity: String,
-) -> Result<NewGridTxData<T>, BuildNewGridTxError> {
-    let grid_value_fn: Box<dyn Fn(Fraction) -> Result<u64, BuildNewGridTxError>> =
-        match order_value_target {
-            OrderValueTarget::Value(value_per_grid) => Box::new(move |bid: Fraction| {
-                fraction_to_u64((Fraction::from(*value_per_grid.as_u64()) / bid).floor())
-            }),
-            OrderValueTarget::Token(token_per_grid) => {
-                Box::new(move |_: Fraction| Ok(*token_per_grid.as_u64()))
-            }
-        };
+) -> Result<NewGridTxData<T>, BuildNewGridTxError<T::Error>>
+where
+    BuildNewGridTxError<T::Error>: From<T::Error>,
+{
+    let grid_value_fn: Box<dyn Fn(Fraction) -> Result<u64, _>> = match order_value_target {
+        OrderValueTarget::Value(value_per_grid) => Box::new(move |bid: Fraction| {
+            fraction_to_u64((Fraction::from(*value_per_grid.as_u64()) / bid).floor())
+        }),
+        OrderValueTarget::Token(token_per_grid) => {
+            Box::new(move |_: Fraction| Ok(*token_per_grid.as_u64()))
+        }
+    };
 
     let owner_ec_point = if let Address::P2Pk(owner_dlog) = &owner_address {
         Ok(*owner_dlog.h.clone())
@@ -500,7 +501,7 @@ fn build_new_grid_data<T: LiquidityProvider>(
         None => (None, initial_order),
     };
 
-    let missing_ergs = once(initial_orders.value.as_i64())
+    let missing_ergs: Result<BoxValue, _> = once(initial_orders.value.as_i64())
         .chain(once(fee_value.as_i64()))
         .chain(
             liquidity_state
@@ -509,7 +510,9 @@ fn build_new_grid_data<T: LiquidityProvider>(
         )
         .chain(liquidity_box.iter().map(|lb| -lb.ergo_box.value.as_i64()))
         .sum::<i64>()
-        .try_into()?;
+        .try_into();
+
+    let missing_ergs = missing_ergs.map_err(BuildNewGridTxError::BoxValue)?;
 
     let selection = SimpleBoxSelector::new().select(wallet_boxes, missing_ergs, &[])?;
 
@@ -538,7 +541,7 @@ fn build_new_grid_data<T: LiquidityProvider>(
 fn fill_orders<T: LiquidityProvider>(
     liquidity_box: T,
     order: MultiGridOrder,
-) -> Result<(Option<T>, MultiGridOrder), LiquidityProviderError> {
+) -> Result<(Option<T>, MultiGridOrder), T::Error> {
     let (new_pool, filled) = liquidity_box.fill_orders(vec![&order])?;
     match filled.into_iter().next() {
         Some((_, filled_order)) => Ok((Some(new_pool), filled_order)),

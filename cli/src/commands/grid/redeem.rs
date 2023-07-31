@@ -4,10 +4,13 @@ use anyhow::anyhow;
 use clap::{ArgGroup, Parser};
 use ergo_lib::{
     ergo_chain_types::Digest32,
-    ergotree_ir::chain::{
-        address::Address,
-        ergo_box::box_value::BoxValue,
-        token::{Token, TokenAmount, TokenId},
+    ergotree_ir::{
+        chain::{
+            address::Address,
+            ergo_box::box_value::BoxValue,
+            token::{Token, TokenAmount, TokenId},
+        },
+        serialization::SigmaParsingError,
     },
     wallet::box_selector::ErgoBoxAssetsData,
 };
@@ -17,11 +20,13 @@ use off_the_grid::{
     node::client::NodeClient,
     units::{TokenStore, ERG_UNIT},
 };
-use tabled::Table;
 
 use crate::scan_config::ScanConfig;
 
-use super::{MinerFeeValue, SummarizedInput, SummarizedOutput, SummarizedTransaction};
+use super::{
+    IntoSummarizedTransaction, MinerFeeValue, SummarizedInput, SummarizedOutput,
+    SummarizedTransaction,
+};
 
 #[derive(Parser)]
 #[command(group(
@@ -43,24 +48,19 @@ pub struct RedeemOptions {
         default_value = "0.001"
     )]
     fee: String,
-    #[clap(short = 'y', help = "Submit transaction")]
-    submit: bool,
 }
 
 pub async fn handle_grid_redeem(
-    node_client: NodeClient,
+    node_client: &NodeClient,
     scan_config: ScanConfig,
     options: RedeemOptions,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RedeemMultiData> {
     let RedeemOptions {
         token_id,
         grid_identity,
         all: _,
         fee,
-        submit,
     } = options;
-
-    let token_store = TokenStore::load(None)?;
 
     let grid_identity = grid_identity.map(|i| i.into_bytes());
 
@@ -100,26 +100,11 @@ pub async fn handle_grid_redeem(
 
     let fee_value = fee_amount.amount().try_into()?;
 
-    let redeem_data = build_redeem_multi_tx(
+    build_redeem_multi_tx(
         grid_orders,
         node_client.wallet_status().await?.change_address()?,
         fee_value,
-    )?;
-
-    let described_tx = redeem_data.into_described_tx(&token_store)?;
-
-    if submit {
-        let tx = described_tx.try_into()?;
-        let signed = node_client.wallet_transaction_sign(&tx).await?;
-
-        let tx_id = node_client.transaction_submit(&signed).await?;
-        println!("Transaction submitted: {:?}", tx_id);
-    } else {
-        let table: Table = described_tx.into();
-        println!("{}", table);
-    }
-
-    Ok(())
+    )
 }
 
 fn build_redeem_multi_tx(
@@ -177,17 +162,19 @@ fn build_redeem_multi_tx(
     })
 }
 
-struct RedeemMultiData {
+pub struct RedeemMultiData {
     orders: Vec<TrackedBox<MultiGridOrder>>,
     change_boxes: Vec<WalletBox<ErgoBoxAssetsData>>,
     fee_value: MinerFeeValue,
 }
 
-impl RedeemMultiData {
-    pub fn into_described_tx(
+impl IntoSummarizedTransaction for RedeemMultiData {
+    type Error = SigmaParsingError;
+
+    fn into_summarized_transaction(
         self,
         token_store: &TokenStore,
-    ) -> anyhow::Result<SummarizedTransaction> {
+    ) -> Result<SummarizedTransaction, Self::Error> {
         let creation_height = self
             .orders
             .iter()

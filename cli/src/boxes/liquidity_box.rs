@@ -1,45 +1,26 @@
 use ergo_lib::ergotree_ir::chain::{
-    ergo_box::{box_value::BoxValueError, ErgoBoxCandidate},
-    token::{Token, TokenAmountError, TokenId},
+    ergo_box::ErgoBoxCandidate,
+    token::{Token, TokenId},
 };
-use num_bigint::BigInt;
 use std::cmp::Ordering;
-use thiserror::Error;
 
 use crate::grid::multigrid_order::{
     FillMultiGridOrders, GridOrderEntries, GridOrderEntry, MultiGridOrder, MultiGridRef, OrderState,
 };
 
-#[derive(Error, Debug)]
-pub enum LiquidityProviderError {
-    #[error("Insufficient liquidity to perform swap")]
-    InsufficientLiquidity,
-    #[error("Liquidity box does not contain token {0:?}")]
-    MissingToken(TokenId),
-    #[error(transparent)]
-    BoxValueError(#[from] BoxValueError),
-    #[error(transparent)]
-    TokenAmountError(#[from] TokenAmountError),
-    #[error("Cannot convert {0} to u64")]
-    BigIntTruncated(BigInt),
-    #[error("{0}")]
-    Other(String),
-}
-
 /// Trait for boxes that can be used to swap tokens
 pub trait LiquidityProvider: Sized + Clone {
+    type Error: std::error::Error;
+
     fn can_swap(&self, token_id: &TokenId) -> bool;
 
-    fn with_swap(self, input: &Token) -> Result<Self, LiquidityProviderError>;
+    fn with_swap(self, input: &Token) -> Result<Self, Self::Error>;
 
-    fn into_box_candidate(
-        self,
-        creation_height: u32,
-    ) -> Result<ErgoBoxCandidate, LiquidityProviderError>;
+    fn into_box_candidate(self, creation_height: u32) -> Result<ErgoBoxCandidate, Self::Error>;
 
-    fn output_amount(&self, input: &Token) -> Result<Token, LiquidityProviderError>;
+    fn output_amount(&self, input: &Token) -> Result<Token, Self::Error>;
 
-    fn input_amount(&self, output: &Token) -> Result<Token, LiquidityProviderError>;
+    fn input_amount(&self, output: &Token) -> Result<Token, Self::Error>;
 
     fn asset_x(&self) -> &Token;
 
@@ -203,7 +184,7 @@ impl<T> FillMultiGridOrders for T
 where
     T: LiquidityProvider,
 {
-    type Error = LiquidityProviderError;
+    type Error = T::Error;
 
     fn fill_orders<G>(
         self,

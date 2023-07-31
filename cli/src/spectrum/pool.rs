@@ -23,7 +23,7 @@ use thiserror::Error;
 use crate::{
     boxes::{
         describe_box::{BoxAssetDisplay, ErgoBoxDescriptors},
-        liquidity_box::{LiquidityProvider, LiquidityProviderError},
+        liquidity_box::LiquidityProvider,
     },
     units::{TokenStore, UnitAmount, ERG_UNIT},
 };
@@ -57,24 +57,14 @@ impl PoolType {
 
 #[derive(Error, Debug)]
 pub enum SpectrumSwapError {
+    #[error(transparent)]
+    BoxValueError(#[from] BoxValueError),
     #[error("Cannot convert {0} to u64")]
     BigIntTruncated(BigInt),
     #[error(transparent)]
     TokenAmountError(#[from] TokenAmountError),
     #[error("Cannot swap token {0:?}")]
     InvalidToken(TokenId),
-}
-
-impl From<SpectrumSwapError> for LiquidityProviderError {
-    fn from(e: SpectrumSwapError) -> Self {
-        match e {
-            SpectrumSwapError::BigIntTruncated(_) => LiquidityProviderError::InsufficientLiquidity,
-            SpectrumSwapError::TokenAmountError(_) => LiquidityProviderError::Other(e.to_string()),
-            SpectrumSwapError::InvalidToken(token_id) => {
-                LiquidityProviderError::MissingToken(token_id)
-            }
-        }
-    }
 }
 
 #[derive(Error, Debug)]
@@ -147,11 +137,13 @@ impl TryFrom<&ErgoBox> for SpectrumPool {
 }
 
 impl LiquidityProvider for SpectrumPool {
+    type Error = SpectrumSwapError;
+
     fn can_swap(&self, token_id: &TokenId) -> bool {
         token_id == &self.asset_x.token_id || token_id == &self.asset_y.token_id
     }
 
-    fn with_swap(self, input: &Token) -> Result<Self, LiquidityProviderError> {
+    fn with_swap(self, input: &Token) -> Result<Self, Self::Error> {
         let output = self.output_amount(input)?;
 
         let (x_amount, y_amount): (TokenAmount, TokenAmount) =
@@ -177,7 +169,7 @@ impl LiquidityProvider for SpectrumPool {
         })
     }
 
-    fn output_amount(&self, input: &Token) -> Result<Token, LiquidityProviderError> {
+    fn output_amount(&self, input: &Token) -> Result<Token, Self::Error> {
         let (from, to) = if input.token_id == self.asset_x.token_id {
             Ok((&self.asset_x, &self.asset_y))
         } else if input.token_id == self.asset_y.token_id {
@@ -200,7 +192,7 @@ impl LiquidityProvider for SpectrumPool {
         Ok((to.token_id, token_amount).into())
     }
 
-    fn input_amount(&self, output: &Token) -> Result<Token, LiquidityProviderError> {
+    fn input_amount(&self, output: &Token) -> Result<Token, Self::Error> {
         let (from, to) = if output.token_id == self.asset_y.token_id {
             Ok((&self.asset_x, &self.asset_y))
         } else if output.token_id == self.asset_x.token_id {
@@ -218,16 +210,13 @@ impl LiquidityProvider for SpectrumPool {
 
         let token_amount: TokenAmount = input_amount
             .to_u64()
-            .ok_or(LiquidityProviderError::BigIntTruncated(input_amount))?
+            .ok_or(SpectrumSwapError::BigIntTruncated(input_amount))?
             .try_into()?;
 
         Ok((from.token_id, token_amount).into())
     }
 
-    fn into_box_candidate(
-        self,
-        creation_height: u32,
-    ) -> Result<ErgoBoxCandidate, LiquidityProviderError> {
+    fn into_box_candidate(self, creation_height: u32) -> Result<ErgoBoxCandidate, Self::Error> {
         let registers: HashMap<NonMandatoryRegisterId, Constant> =
             HashMap::from([(NonMandatoryRegisterId::R4, self.fee_num.into())]);
 
