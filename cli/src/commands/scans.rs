@@ -41,22 +41,29 @@ fn n2t_tracking_rule() -> TrackingRule {
     }
 }
 
+fn multigrid_tracking_rule() -> TrackingRule {
+    let grid_script = MULTIGRID_ORDER_SCRIPT.sigma_serialize_bytes().unwrap();
+
+    let grid_value: Constant = grid_script.into();
+    let grid_value_bytes = grid_value.sigma_serialize_bytes().unwrap();
+
+    TrackingRule::Equals {
+        value: grid_value_bytes,
+        register: "R1".to_string(),
+    }
+}
+
 fn wallet_multigrid_tracking_rule(owner_dlog: ProveDlog) -> TrackingRule {
     // We assume the grid order script is always valid
-    let wallet_grid_script = MULTIGRID_ORDER_SCRIPT.sigma_serialize_bytes().unwrap();
+    let multigrid_rule = multigrid_tracking_rule();
 
-    let wallet_grid_value: Constant = wallet_grid_script.into();
-    let wallet_grid_value_bytes = wallet_grid_value.sigma_serialize_bytes().unwrap();
     let owner_group_element_value: Constant = (*owner_dlog.h).into();
     let owner_group_element_value_bytes =
         owner_group_element_value.sigma_serialize_bytes().unwrap();
 
     TrackingRule::And {
         args: vec![
-            TrackingRule::Equals {
-                value: wallet_grid_value_bytes,
-                register: "R1".to_string(),
-            },
+            multigrid_rule,
             TrackingRule::Equals {
                 value: owner_group_element_value_bytes,
                 register: "R4".to_string(),
@@ -108,6 +115,7 @@ pub async fn handle_scan_command(
 
             let n2t_tracking_rule = n2t_tracking_rule();
             let wallet_multigrid_tracking_rule = wallet_multigrid_tracking_rule(owner_dlog);
+            let multigrid_tracking_rule = multigrid_tracking_rule();
 
             let scans = node_client.list_scans().await?;
 
@@ -115,6 +123,10 @@ pub async fn handle_scan_command(
             let wallet_multigrid_scan = scans
                 .iter()
                 .find(|s| s.tracking_rule == wallet_multigrid_tracking_rule);
+
+            let multigrid_scan = scans
+                .iter()
+                .find(|s| s.tracking_rule == multigrid_tracking_rule);
 
             let n2t_scan_id =
                 get_or_create_scan(&node_client, n2t_tracking_rule, n2t_scan, "N2T Pool").await?;
@@ -127,9 +139,18 @@ pub async fn handle_scan_command(
             )
             .await?;
 
+            let multigrid_scan_id = get_or_create_scan(
+                &node_client,
+                multigrid_tracking_rule,
+                multigrid_scan,
+                "Multigrid",
+            )
+            .await?;
+
             let scan_config = ScanConfig {
                 n2t_scan_id,
                 wallet_multigrid_scan_id,
+                multigrid_scan_id,
             };
 
             let output_path = output_path.unwrap_or_else(|| "scan_config.json".to_string());

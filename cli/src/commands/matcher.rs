@@ -190,7 +190,7 @@ pub async fn handle_matcher_command(
 
     loop {
         let (grid_orders, n2t_pools, mempool_txs) = try_join!(
-            node_client.get_scan_unspent(scan_config.wallet_multigrid_scan_id),
+            node_client.get_scan_unspent(scan_config.multigrid_scan_id),
             node_client.get_scan_unspent(scan_config.n2t_scan_id),
             node_client.transaction_unconfirmed_all(),
         )?;
