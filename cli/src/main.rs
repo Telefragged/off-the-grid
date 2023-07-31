@@ -12,7 +12,7 @@ use commands::{
     grid::{handle_grid_command, GridCommand},
     matcher::{handle_matcher_command, MatcherCommand},
     scans::{handle_scan_command, ScansCommand},
-    units::{handle_units_command, UnitsCommand},
+    tokens::{handle_tokens_command, TokensCommand},
 };
 
 #[derive(Subcommand)]
@@ -24,7 +24,7 @@ pub enum Commands {
     #[command(author, version, about, long_about = None)]
     Matcher(MatcherCommand),
     #[command(author, version, about, long_about = None)]
-    Units(UnitsCommand),
+    Tokens(TokensCommand),
 }
 
 #[derive(Parser)]
@@ -81,6 +81,6 @@ async fn main() -> anyhow::Result<()> {
         Commands::Scans(scan_command) => handle_scan_command(node, scan_command).await,
         Commands::Grid(grid_command) => handle_grid_command(node, grid_command).await,
         Commands::Matcher(executor_command) => handle_matcher_command(node, executor_command).await,
-        Commands::Units(units_command) => handle_units_command(node, units_command).await,
+        Commands::Tokens(units_command) => handle_tokens_command(node, units_command).await,
     }
 }

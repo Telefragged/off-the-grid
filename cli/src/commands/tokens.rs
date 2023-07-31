@@ -27,14 +27,14 @@ pub enum Commands {
 }
 
 #[derive(Args)]
-pub struct UnitsCommand {
+pub struct TokensCommand {
     #[command(subcommand)]
     pub command: Commands,
 }
 
-pub async fn handle_units_command(
+pub async fn handle_tokens_command(
     node_client: NodeClient,
-    units_command: UnitsCommand,
+    units_command: TokensCommand,
 ) -> anyhow::Result<()> {
     match units_command.command {
         Commands::Update {
