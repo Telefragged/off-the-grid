@@ -58,6 +58,8 @@ pub async fn handle_grid_redeem(
     let RedeemOptions {
         token_id,
         grid_identity,
+        // Not used in the code but required by the clap group
+        // so the user is forced to choose one of the filters
         all: _,
         fee,
     } = options;
