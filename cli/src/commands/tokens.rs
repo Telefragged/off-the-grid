@@ -62,10 +62,9 @@ pub async fn handle_tokens_command(
                 .collect();
 
             if token_ids.is_empty() {
+                println!("No new tokens to add");
                 return Ok(());
             }
-
-            println!("Updating {} tokens from explorer API", token_ids.len());
 
             let explorer_client = reqwest::Client::new();
 
@@ -97,6 +96,22 @@ pub async fn handle_tokens_command(
                 }
             }))
             .await;
+
+            let errors = responses.iter().filter(|resp| resp.is_none()).count();
+
+            if errors > 0 {
+                eprintln!(
+                    "Error: Failed to fetch {} out of {} tokens from explorer API",
+                    errors,
+                    token_ids.len()
+                );
+            }
+
+            let successes = responses.iter().filter(|resp| resp.is_some()).count();
+
+            if successes > 0 {
+                println!("{} new tokens added", successes);
+            }
 
             let unitsystem = TokenStore::with_tokens(
                 responses
