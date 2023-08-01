@@ -50,7 +50,7 @@ pub async fn handle_tokens_command(
                 .filter_map(|b| b.try_into().ok())
                 .collect();
 
-            let current_tokens = TokenStore::load(None).unwrap_or(TokenStore::with_tokens(vec![]));
+            let current_tokens = TokenStore::load(None).unwrap_or_default();
 
             let token_ids: HashSet<_> = n2t_pools
                 .iter()

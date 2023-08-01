@@ -213,23 +213,22 @@ pub struct TokenStore {
     tokens: HashMap<TokenId, TokenInfo>,
 }
 
+impl Default for TokenStore {
+    fn default() -> Self {
+        Self {
+            tokens: HashMap::from([(ERG_TOKEN_INFO.token_id, ERG_TOKEN_INFO.clone())]),
+        }
+    }
+}
+
 impl TokenStore {
     pub fn with_tokens(tokens: Vec<TokenInfo>) -> Self {
-        let erg_token = TokenInfo {
-            token_id: Digest32::zero().into(),
-            name: "ERG".to_string(),
-            decimals: 9,
-        };
+        let mut ret: Self = Default::default();
 
-        let mut tokens = tokens;
-        tokens.push(erg_token);
+        ret.tokens
+            .extend(tokens.into_iter().map(|token| (token.token_id, token)));
 
-        let tokens = tokens
-            .into_iter()
-            .map(|token| (token.token_id, token))
-            .collect();
-
-        Self { tokens }
+        ret
     }
 
     pub fn get_unit(&self, token_id: &TokenId) -> Unit {
