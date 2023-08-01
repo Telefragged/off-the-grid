@@ -34,6 +34,12 @@ struct WalletStatusDto {
     error: String,
 }
 
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct WalletRescanDto {
+    from_height: i32,
+}
+
 #[derive(Error, Debug)]
 pub enum WalletStatusError {
     // #[error("Wallet not initialized")]
@@ -96,6 +102,7 @@ impl NodeClient {
         let result = self.request_post(path, &body).await?;
         Ok(result)
     }
+
     pub async fn wallet_status(&self) -> Result<WalletStatus, ErgoNodeError> {
         let path = "wallet/status";
         let result: WalletStatusDto = self.request_get(path).await?;
@@ -110,5 +117,14 @@ impl NodeClient {
             error: result.error,
             change_address,
         })
+    }
+
+    pub async fn wallet_rescan(&self, from_height: i32) -> Result<(), ErgoNodeError> {
+        let path = "wallet/rescan";
+        let body = WalletRescanDto { from_height };
+
+        let _: String = self.request_post(path, &body).await?;
+
+        Ok(())
     }
 }

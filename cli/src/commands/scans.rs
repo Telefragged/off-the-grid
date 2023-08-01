@@ -14,12 +14,38 @@ use off_the_grid::{
 
 use crate::scan_config::ScanConfig;
 
+#[derive(Clone, Debug)]
+pub enum RescanHeight {
+    Absolute(i32),
+    Relative(i32),
+}
+
+fn rescan_height_from_str(s: &str) -> Result<RescanHeight, String> {
+    match s.strip_prefix('~') {
+        Some(s) => s
+            .parse::<i32>()
+            .map(RescanHeight::Relative)
+            .map_err(|e| format!("Invalid rescan height: {}", e)),
+        None => s
+            .parse::<i32>()
+            .map(RescanHeight::Absolute)
+            .map_err(|e| format!("Invalid rescan height: {}", e)),
+    }
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Create a scan config file
     CreateConfig {
         #[arg(short, long, help = "Output path [default: scan_config.json]")]
         output_path: Option<String>,
+        #[arg(
+            short,
+            long = "rescan",
+            help = "Trigger rescan from the given height. Use ~<n> to rescan from the current height - n.",
+            value_parser = rescan_height_from_str
+        )]
+        rescan_height: Option<RescanHeight>,
     },
 }
 
@@ -102,7 +128,10 @@ pub async fn handle_scan_command(
     scan_command: ScansCommand,
 ) -> anyhow::Result<()> {
     match scan_command.command {
-        Commands::CreateConfig { output_path } => {
+        Commands::CreateConfig {
+            output_path,
+            rescan_height,
+        } => {
             let wallet_status = node_client.wallet_status().await?;
             wallet_status.error_if_locked()?;
             let change_address = wallet_status.change_address()?;
@@ -155,6 +184,25 @@ pub async fn handle_scan_command(
 
             let output_path = output_path.unwrap_or_else(|| "scan_config.json".to_string());
             std::fs::write(&output_path, serde_json::to_string_pretty(&scan_config)?)?;
+
+            if let Some(rescan_height) = rescan_height {
+                let height = match rescan_height {
+                    RescanHeight::Absolute(height) => height,
+                    RescanHeight::Relative(height) => wallet_status
+                        .wallet_height
+                        .checked_sub(height)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Rescan height {} is greater than the current wallet height {}",
+                                height,
+                                wallet_status.wallet_height
+                            )
+                        })?,
+                };
+
+                node_client.wallet_rescan(height).await?;
+                println!("Wallet rescan triggered from height {}", height);
+            }
 
             println!("Scan config created at {}", output_path);
         }
