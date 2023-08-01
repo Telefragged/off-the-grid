@@ -70,7 +70,16 @@ pub async fn handle_grid_command(
     orders_command: GridCommand,
 ) -> anyhow::Result<()> {
     let scan_config = ScanConfig::try_create(orders_command.scan_config, None)?;
-    let token_store = TokenStore::load(None).unwrap_or_default();
+    let token_store = TokenStore::load(None);
+    if token_store.is_err() {
+        eprintln!("{}", "Warning: No token configuration found".yellow());
+
+        eprintln!(
+            "{}",
+            "Run `off-the-grid tokens update` to create one".yellow()
+        );
+    }
+    let token_store = token_store.unwrap_or_default();
 
     match orders_command.command {
         Commands::Create(options) => {
