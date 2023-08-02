@@ -20,7 +20,7 @@ use off_the_grid::{
     spectrum::pool::SpectrumPool,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Values},
     iter::once,
     time::Duration,
 };
@@ -128,7 +128,7 @@ trait OverlayExt<T> {
     fn overlay(
         self,
         txs: &MempoolOverlay,
-    ) -> MempoolOverlayIter<'_, Self, std::collections::hash_map::Values<'_, BoxId, ErgoBox>>
+    ) -> MempoolOverlayIter<'_, Self, Values<'_, BoxId, ErgoBox>>
     where
         Self: Sized;
 }
@@ -141,7 +141,7 @@ where
     fn overlay(
         self,
         overlay: &MempoolOverlay,
-    ) -> MempoolOverlayIter<'_, I, std::collections::hash_map::Values<'_, BoxId, ErgoBox>> {
+    ) -> MempoolOverlayIter<'_, I, Values<'_, BoxId, ErgoBox>> {
         MempoolOverlayIter {
             box_iter: self,
             overlay_created: overlay.created_boxes.values(),
