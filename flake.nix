@@ -20,8 +20,7 @@
       in
       with pkgs;
       {
-
-        defaultPackage =
+        packages.default =
           naersk'.buildPackage {
             src = ./cli;
             root = ./.;
@@ -30,7 +29,7 @@
             buildInputs = with pkgs; [ openssl ];
           };
 
-        devShell =
+        devShells.default =
           let
             escompile =
               let
