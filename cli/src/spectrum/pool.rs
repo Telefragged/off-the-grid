@@ -7,7 +7,7 @@ use ergo_lib::{
             address::Address,
             ergo_box::{
                 box_value::BoxValueError, BoxId, ErgoBox, ErgoBoxCandidate, NonMandatoryRegisterId,
-                NonMandatoryRegisters,
+                NonMandatoryRegisters, RegisterValueError,
             },
             token::{Token, TokenAmount, TokenAmountError, TokenId},
         },
@@ -75,6 +75,8 @@ pub enum SpectrumPoolError {
     BoxValueError(#[from] BoxValueError),
     #[error(transparent)]
     TokenAmountError(#[from] TokenAmountError),
+    #[error(transparent)]
+    RegisterValue(#[from] RegisterValueError),
 }
 
 #[derive(Clone, Debug)]
@@ -110,8 +112,8 @@ impl TryFrom<&ErgoBox> for SpectrumPool {
     fn try_from(pool_box: &ErgoBox) -> Result<Self, Self::Error> {
         let fee_value = pool_box
             .additional_registers
-            .get_constant(NonMandatoryRegisterId::R4)
-            .and_then(|x| x.clone().try_extract_into::<i32>().ok());
+            .get_constant(NonMandatoryRegisterId::R4)?
+            .and_then(|x| x.try_extract_into::<i32>().ok());
 
         let tokens = pool_box.tokens.as_ref().map(|v| v.as_slice());
 
