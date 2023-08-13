@@ -1,6 +1,6 @@
 use reqwest::{
     header::{HeaderMap, HeaderValue, InvalidHeaderValue},
-    Client, ClientBuilder, Url,
+    Client, ClientBuilder, RequestBuilder, Url,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
@@ -34,6 +34,12 @@ pub enum ErgoNodeError {
     #[error(transparent)]
     ReqwestError(#[from] reqwest::Error),
 
+    #[error("Reqwest error: {reqwest_error} at {request_url}")]
+    ReqwestErrorPath {
+        reqwest_error: reqwest::Error,
+        request_url: String,
+    },
+
     #[error("API error: {api_error} at {request_url}")]
     ApiError {
         api_error: ApiError,
@@ -44,6 +50,33 @@ pub enum ErgoNodeError {
 pub struct NodeClient {
     client: Client,
     base_url: Url,
+}
+
+async fn send_request<T>(request: RequestBuilder, request_url: String) -> Result<T, ErgoNodeError>
+where
+    for<'a> T: Deserialize<'a> + Debug,
+{
+    let response_result = request.send().await;
+
+    let response = match response_result {
+        Ok(x) => x,
+        Err(error) => return Err(ErgoNodeError::ReqwestErrorPath { reqwest_error: error, request_url }),
+    };
+
+    let parsed_result = response.json::<ApiResponse<T>>().await;
+
+    let parsed = match parsed_result {
+        Ok(x) => x,
+        Err(error) => return Err(ErgoNodeError::ReqwestErrorPath { reqwest_error: error, request_url }),
+    };
+
+    match parsed {
+        ApiResponse::Ok(t) => Ok(t),
+        ApiResponse::Err(api_error) => Err(ErgoNodeError::ApiError {
+            api_error,
+            request_url,
+        }),
+    }
 }
 
 impl NodeClient {
@@ -61,21 +94,7 @@ impl NodeClient {
     {
         let request_url = format!("{}{}", self.base_url, path);
 
-        let parsed = self
-            .client
-            .get(request_url.clone())
-            .send()
-            .await?
-            .json::<ApiResponse<T>>()
-            .await?;
-
-        match parsed {
-            ApiResponse::Ok(t) => Ok(t),
-            ApiResponse::Err(api_error) => Err(ErgoNodeError::ApiError {
-                api_error,
-                request_url,
-            }),
-        }
+        send_request(self.client.get(&request_url), request_url).await
     }
 
     pub(super) async fn request_post<Req, Resp>(
@@ -89,21 +108,6 @@ impl NodeClient {
     {
         let request_url = format!("{}{}", self.base_url, path);
 
-        let parsed = self
-            .client
-            .post(request_url.clone())
-            .json(body)
-            .send()
-            .await?
-            .json::<ApiResponse<Resp>>()
-            .await?;
-
-        match parsed {
-            ApiResponse::Ok(t) => Ok(t),
-            ApiResponse::Err(api_error) => Err(ErgoNodeError::ApiError {
-                api_error,
-                request_url,
-            }),
-        }
+        send_request(self.client.post(&request_url).json(body), request_url).await
     }
 }
