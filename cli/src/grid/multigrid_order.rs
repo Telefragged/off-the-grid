@@ -6,7 +6,6 @@ use ergo_lib::{
             ergo_box::{
                 box_value::{BoxValue, BoxValueError},
                 ErgoBox, ErgoBoxCandidate, NonMandatoryRegisterId, NonMandatoryRegisters,
-                RegisterValueError,
             },
             token::{TokenAmount, TokenAmountError, TokenId},
         },
@@ -76,9 +75,6 @@ pub enum MultiGridOrderError {
 
     #[error(transparent)]
     TokenAmountError(#[from] TokenAmountError),
-
-    #[error(transparent)]
-    RegisterValue(#[from] RegisterValueError),
 
     #[error("Invalid grid configuration: {0}")]
     InvalidConfiguration(#[from] MultiGridConfigurationError),
@@ -406,10 +402,11 @@ impl TryFrom<&ErgoBox> for MultiGridOrder {
         {
             value
                 .additional_registers
-                .get_constant(register)?
+                .get_constant(register)
                 .ok_or(MultiGridOrderError::MissingRegisterValue(register))
                 .and_then(|c| {
-                    c.try_extract_into::<T>()
+                    c.clone()
+                        .try_extract_into::<T>()
                         .map_err(|e| MultiGridOrderError::InvalidRegisterValue(register, e.0))
                 })
         }
