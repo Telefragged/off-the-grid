@@ -22,7 +22,7 @@ clap = { version = "4.3", features = [ "derive" ] }
 itertools = "0.11"
 fraction = { version = "0.13", default-features = false }
 futures = "0.3"
-tabled = { version = "0.12", features = ["color", "std"] }
+tabled = { version = "0.14", features = ["color", "std"] }
 colored = "2.0"
 
 [dev-dependencies]
