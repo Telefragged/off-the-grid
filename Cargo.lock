@@ -602,9 +602,9 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
 name = "ergo-chain-types"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1236a7a2ce564e9b124b0d2309efcf97e20c0461cbd8b25a3a5cf0b0e4b3ad59"
+checksum = "0e2e6bd5ad603dd3093fe0aa4201a5165810beb96b704585941e9e9edc2e2b9a"
 dependencies = [
  "base16",
  "base64 0.13.1",
@@ -625,9 +625,9 @@ dependencies = [
 
 [[package]]
 name = "ergo-lib"
-version = "0.23.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd9915a13da895fae57a56d98c25524c7801864e375195b32fe839a845f12f73"
+checksum = "bb1c84d8caa22d0968aa3bedcc934b371c63af6b588b787cb99e75d3bde92f47"
 dependencies = [
  "base16",
  "bounded-vec",
@@ -639,6 +639,7 @@ dependencies = [
  "ergotree-ir",
  "hmac",
  "indexmap 1.9.3",
+ "itertools",
  "k256",
  "lazy_static",
  "num-bigint",
@@ -656,9 +657,9 @@ dependencies = [
 
 [[package]]
 name = "ergo-merkle-tree"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2db624da9f3d2842fbdb5aff28a3f8ed3088fe826842651e88b24db910ee57fc"
+checksum = "40dc192be73c81737ebaf4c9dcc2352be1b351105b6e562c0548b83ab369970d"
 dependencies = [
  "base16",
  "blake2 0.10.6",
@@ -674,9 +675,9 @@ dependencies = [
 
 [[package]]
 name = "ergo-nipopow"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "285d1203c46abf143c8397c678a11c17815d13a32bc6a5437843504abb6072d3"
+checksum = "80723820cef2446e0bd3a41551d99628317d817ee7f4034106fcb49bd834b514"
 dependencies = [
  "base16",
  "bounded-integer",
@@ -696,9 +697,9 @@ dependencies = [
 
 [[package]]
 name = "ergotree-interpreter"
-version = "0.23.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22f2f920835d6c93c5ed50f192ef60a5f20e81974f66388d76c7f340df952ad3"
+checksum = "c41a284facad55a04dcfde50c8fe37cc3f405e94f4a7ff45f9e0fd5352ce8ed4"
 dependencies = [
  "base16",
  "blake2 0.10.6",
@@ -726,9 +727,9 @@ dependencies = [
 
 [[package]]
 name = "ergotree-ir"
-version = "0.23.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81e32b786e52f86e416bbb54b675a2edbc867512d51855a868bdeb2e3a379b14"
+checksum = "d843e278e019e56f7503f0c5a386768c7fad6fe8f3cc9b4edbc3334dede3824e"
 dependencies = [
  "base16",
  "bounded-vec",
@@ -949,9 +950,9 @@ dependencies = [
 
 [[package]]
 name = "gf2_192"
-version = "0.23.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c79181c79ef0309fc10db9817a247b5da8f2d6127df5338eaed66f1f7c49dfb3"
+checksum = "849e7593b357fe77cf7695bee591ade155f7310032e08ccd8f0db256b5f67434"
 dependencies = [
  "derive_more",
  "rand",
@@ -2117,9 +2118,9 @@ dependencies = [
 
 [[package]]
 name = "sigma-ser"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "228b7906898ce31d8e1c9ccdb246056a15e51ded62743a2d08fa627504e2d66b"
+checksum = "4398b24f67b95ccdb7d91629f5430122a5a5b00f88dbe360d76dff4ee5706eaa"
 dependencies = [
  "bitvec",
  "bounded-vec",
@@ -2128,9 +2129,9 @@ dependencies = [
 
 [[package]]
 name = "sigma-util"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f639bf794be2015d6a17d9161f455759e6d64462c18c5a35e3d892249191199c"
+checksum = "80697f01502ab3e7a0488328a356c16bd6adac522fd2780abec1b419cace096a"
 dependencies = [
  "blake2 0.10.6",
  "sha2 0.10.7",
