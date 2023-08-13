@@ -19,7 +19,7 @@ base16 = "0.2"
 anyhow = "1.0"
 config = "0.13"
 clap = { version = "4.3", features = [ "derive" ] }
-itertools = "0.10"
+itertools = "0.11"
 fraction = { version = "0.13", default-features = false }
 futures = "0.3"
 tabled = { version = "0.12", features = ["color", "std"] }
