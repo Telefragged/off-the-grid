@@ -20,7 +20,7 @@ use off_the_grid::{
     spectrum::pool::SpectrumPool,
 };
 use std::{
-    collections::{HashMap, HashSet, hash_map::Values},
+    collections::{hash_map::Values, HashMap, HashSet},
     iter::once,
     time::Duration,
 };
@@ -186,14 +186,35 @@ pub async fn handle_matcher_command(
         address_encoder.address_to_str(&reward_address)
     );
 
+    matcher_loop(&node_client, &scan_config, matcher_interval, &reward_script).await;
+
+    Ok(())
+}
+
+async fn matcher_loop(
+    node_client: &NodeClient,
+    scan_config: &ScanConfig,
+    matcher_interval: Duration,
+    reward_script: &ErgoTree,
+) {
     let mut box_id_gate = BoxIdGate::new();
 
     loop {
-        let (grid_orders, n2t_pools, mempool_txs) = try_join!(
+        tokio::time::sleep(matcher_interval).await;
+
+        let state_result = try_join!(
             node_client.get_scan_unspent(scan_config.multigrid_scan_id),
             node_client.get_scan_unspent(scan_config.n2t_scan_id),
             node_client.transaction_unconfirmed_all(),
-        )?;
+        );
+
+        let (grid_orders, n2t_pools, mempool_txs) = match state_result {
+            Ok(state) => state,
+            Err(e) => {
+                println!("Error getting state: {}", e);
+                continue;
+            }
+        };
 
         let overlay: MempoolOverlay = mempool_txs.into_iter().collect();
 
@@ -231,26 +252,25 @@ pub async fn handle_matcher_command(
                     .cloned();
 
                 if let Some(pool) = pool {
-                    let result = match_orders(pool, orders, &reward_script, &node_client).await;
+                    let match_result =
+                        try_fill_orders(node_client, reward_script, pool, orders).await;
 
-                    match result {
+                    match match_result {
                         Ok(Some(tx_id)) => println!("Filled orders with tx {}", tx_id),
                         Err(e) => println!("Error filling orders: {}", e),
                         Ok(None) => (),
                     }
                 }
             }
-        } else {
-            tokio::time::sleep(matcher_interval).await;
         }
     }
 }
 
-async fn match_orders(
+async fn try_fill_orders(
+    node_client: &NodeClient,
+    reward_script: &ErgoTree,
     pool: TrackedBox<SpectrumPool>,
     orders: Vec<TrackedBox<MultiGridOrder>>,
-    change_script: &ErgoTree,
-    node_client: &NodeClient,
 ) -> Result<Option<TxId>, anyhow::Error> {
     let (new_pool, filled) = pool.value.clone().fill_orders(orders)?;
 
@@ -285,7 +305,7 @@ async fn match_orders(
 
         let change_candidate = ErgoBoxCandidate {
             value: (surplus - MAX_FEE as i64).try_into()?,
-            ergo_tree: change_script.clone(),
+            ergo_tree: reward_script.clone(),
             tokens: None,
             additional_registers: NonMandatoryRegisters::empty(),
             creation_height,
