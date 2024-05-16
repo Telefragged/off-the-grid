@@ -82,7 +82,7 @@ If the wallet scan is finished or currently in progress the scans may not contai
 
 It is also recommended to fetch token information. This is optional but enable the grid commands to show and accept token names and decimals:
 ```shell
-$ off-the-grid units update
+$ off-the-grid tokens update
 ```
 
 Note that this currently uses the explorer API (by default https://explorer.ergoplatform.com/) instead of the node's own blockchain API.
