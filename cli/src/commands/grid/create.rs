@@ -30,13 +30,19 @@ use off_the_grid::{
     },
     node::client::NodeClient,
     spectrum::pool::{SpectrumPool, SpectrumSwapError},
-    units::{Fraction, Price, TokenStore, Unit, ERG_UNIT},
+    units::{Fraction, Price, TokenStore, ERG_UNIT},
 };
 use tabled::Tabled;
 use thiserror::Error;
 use tokio::try_join;
 
-use crate::{commands::grid::SummarizedOutput, scan_config::ScanConfig};
+use crate::{
+    commands::{
+        error::{CommandResult, Hint},
+        grid::SummarizedOutput,
+    },
+    scan_config::ScanConfig,
+};
 
 use super::{
     IntoSummarizedTransaction, MinerFeeValue, SummarizedInput, SummarizedTransaction,
@@ -195,7 +201,7 @@ pub async fn handle_grid_create(
     scan_config: ScanConfig,
     token_store: &TokenStore,
     options: CreateOptions,
-) -> anyhow::Result<NewGridTxData<SpectrumPool>> {
+) -> CommandResult<NewGridTxData<SpectrumPool>> {
     let CreateOptions {
         token_id,
         token_amount,
@@ -209,9 +215,16 @@ pub async fn handle_grid_create(
 
     let erg_unit = *ERG_UNIT;
 
-    let unit: Unit = token_store
+    let unit = token_store
         .get_unit_by_id(&token_id)
-        .ok_or_else(|| anyhow!("{} is not a known token or a valid token ID", token_id))?;
+        .ok_or_else(|| anyhow!("`{}` is not a known token or a valid token ID", token_id))
+        .hint("Token names are case-sensitive, i.e. `sigusd` is not the same as `SigUSD`")
+        .hint("To ensure the token store is up to date run `off-the-grid tokens update`")?;
+
+    if unit == erg_unit {
+        return Err(anyhow!("cannot create a grid for ERG/ERG pair"))
+            .hint("Specify the token name or ID of the token that will be traded against ERG instead, e.g. `SigUSD`");
+    }
 
     let token_id = unit.token_id();
 
@@ -248,13 +261,14 @@ pub async fn handle_grid_create(
         node_client.wallet_status()
     )?;
 
-    wallet_status.error_if_locked()?;
-
     let liquidity_box = if !no_auto_fill {
         let n2t_pool_boxes = node_client
             .get_scan_unspent(scan_config.n2t_scan_id)
             .await?;
-        Some(
+
+        if n2t_pool_boxes.is_empty() {
+            Err(anyhow!("no liquidity boxes found"))
+        } else {
             n2t_pool_boxes
                 .into_iter()
                 .filter_map(|b| {
@@ -263,11 +277,16 @@ pub async fn handle_grid_create(
                         .filter(|b: &TrackedBox<SpectrumPool>| b.value.asset_y.token_id == token_id)
                 })
                 .max_by_key(|lb| lb.value.amm_factor())
-                .ok_or(anyhow!("No liquidity box found for token {:?}", token_id))?,
-        )
+                .ok_or_else(|| anyhow!("no liquidity box for {:?}", token_id))
+        }
+        .map(Some)
+        .hint("If new scans were recently created it you should also trigger a rescan")
+        .hint("Use `off-the-grid scans create-config --help` for more information")?
     } else {
         None
     };
+
+    wallet_status.error_if_locked()?;
 
     let start: Fraction = range
         .0

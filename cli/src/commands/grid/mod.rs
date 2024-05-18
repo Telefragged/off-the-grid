@@ -42,6 +42,8 @@ use self::{
     subcommands::{handle_grid_details, handle_grid_list},
 };
 
+use super::error::CommandResult;
+
 #[derive(Subcommand)]
 pub enum Commands {
     Create(CreateOptions),
@@ -68,7 +70,7 @@ pub struct GridCommand {
 pub async fn handle_grid_command(
     node_client: NodeClient,
     orders_command: GridCommand,
-) -> anyhow::Result<()> {
+) -> CommandResult<()> {
     let scan_config = ScanConfig::try_create(orders_command.scan_config, None)?;
     let token_store = TokenStore::load(None);
     if token_store.is_err() {
@@ -84,15 +86,17 @@ pub async fn handle_grid_command(
     match orders_command.command {
         Commands::Create(options) => {
             let tx = handle_grid_create(&node_client, scan_config, &token_store, options).await?;
-            transaction_query_loop(&node_client, &token_store, tx).await
+            Ok(transaction_query_loop(&node_client, &token_store, tx).await?)
         }
         Commands::Redeem(options) => {
             let data = handle_grid_redeem(&node_client, scan_config, options).await?;
-            transaction_query_loop(&node_client, &token_store, data).await
+            Ok(transaction_query_loop(&node_client, &token_store, data).await?)
         }
-        Commands::List { token_id } => handle_grid_list(node_client, scan_config, token_id).await,
+        Commands::List { token_id } => {
+            Ok(handle_grid_list(node_client, scan_config, token_id).await?)
+        }
         Commands::Details { grid_identity } => {
-            handle_grid_details(node_client, scan_config, grid_identity).await
+            Ok(handle_grid_details(node_client, scan_config, grid_identity).await?)
         }
     }
 }

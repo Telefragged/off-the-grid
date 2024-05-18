@@ -9,6 +9,7 @@ use off_the_grid::node::client::NodeClient;
 use anyhow::Context;
 use clap::{arg, command, ArgAction, Parser, Subcommand};
 use commands::{
+    error::CommandError,
     grid::{handle_grid_command, GridCommand},
     matcher::{handle_matcher_command, MatcherCommand},
     scans::{handle_scan_command, ScansCommand},
@@ -77,10 +78,22 @@ async fn main() -> anyhow::Result<()> {
         node_config.api_key.as_bytes(),
     )?;
 
-    match args.command {
-        Commands::Scans(scan_command) => handle_scan_command(node, scan_command).await,
+    let result = match args.command {
+        Commands::Scans(scan_command) => handle_scan_command(node, scan_command)
+            .await
+            .map_err(CommandError::from),
         Commands::Grid(grid_command) => handle_grid_command(node, grid_command).await,
-        Commands::Matcher(executor_command) => handle_matcher_command(node, executor_command).await,
-        Commands::Tokens(units_command) => handle_tokens_command(node, units_command).await,
+        Commands::Matcher(executor_command) => handle_matcher_command(node, executor_command)
+            .await
+            .map_err(CommandError::from),
+        Commands::Tokens(units_command) => handle_tokens_command(node, units_command)
+            .await
+            .map_err(CommandError::from),
+    };
+
+    if let Err(command_error) = &result {
+        println!("{command_error}");
     }
+
+    result.map_err(|e| e.error)
 }
