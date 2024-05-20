@@ -280,7 +280,7 @@ pub async fn handle_grid_create(
                 .ok_or_else(|| anyhow!("no liquidity box for {:?}", token_id))
         }
         .map(Some)
-        .hint("If new scans were recently created it you should also trigger a rescan")
+        .hint("If a scan config was recently created it might be required to trigger a rescan")
         .hint("Use `off-the-grid scans create-config --help` for more information")?
     } else {
         None
