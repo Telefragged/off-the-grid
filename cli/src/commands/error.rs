@@ -9,11 +9,6 @@ pub type CommandResult<T> = Result<T, CommandError>;
 
 pub trait Hint<T> {
     fn hint<C: Display>(self, hint: C) -> Result<T, CommandError>;
-
-    fn with_hint<F, H>(self, hint_fn: F) -> Result<T, CommandError>
-    where
-        F: FnOnce() -> H,
-        H: Display;
 }
 
 impl<T> Hint<T> for Result<T, anyhow::Error> {
@@ -23,34 +18,12 @@ impl<T> Hint<T> for Result<T, anyhow::Error> {
             hints: vec![hint.to_string()],
         })
     }
-
-    fn with_hint<F, H>(self, hint_fn: F) -> Result<T, CommandError>
-    where
-        F: FnOnce() -> H,
-        H: Display,
-    {
-        self.map_err(|error| CommandError {
-            error,
-            hints: vec![hint_fn().to_string()],
-        })
-    }
 }
 
 impl<T> Hint<T> for Result<T, CommandError> {
     fn hint<C: Display>(self, hint: C) -> Result<T, CommandError> {
         self.map_err(|mut error| {
             error.hints.push(hint.to_string());
-            error
-        })
-    }
-
-    fn with_hint<F, H>(self, hint_fn: F) -> Result<T, CommandError>
-    where
-        F: FnOnce() -> H,
-        H: Display,
-    {
-        self.map_err(|mut error| {
-            error.hints.push(hint_fn().to_string());
             error
         })
     }
