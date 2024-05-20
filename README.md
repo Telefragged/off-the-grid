@@ -150,7 +150,7 @@ The matcher can then be started:
 $ off-the-grid matcher
 Using reward address: 9...
 ```
-For more configuration see the [matcher_config](./matcher_config.json).
+For more configuration options see the [matcher_config](./matcher_config.json).
 
 The matcher will only print transaction IDs when order matching transactions are submitted, or errors when they happen.
 
