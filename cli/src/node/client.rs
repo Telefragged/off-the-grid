@@ -60,14 +60,24 @@ where
 
     let response = match response_result {
         Ok(x) => x,
-        Err(error) => return Err(ErgoNodeError::ReqwestErrorPath { reqwest_error: error, request_url }),
+        Err(error) => {
+            return Err(ErgoNodeError::ReqwestErrorPath {
+                reqwest_error: error,
+                request_url,
+            })
+        }
     };
 
     let parsed_result = response.json::<ApiResponse<T>>().await;
 
     let parsed = match parsed_result {
         Ok(x) => x,
-        Err(error) => return Err(ErgoNodeError::ReqwestErrorPath { reqwest_error: error, request_url }),
+        Err(error) => {
+            return Err(ErgoNodeError::ReqwestErrorPath {
+                reqwest_error: error,
+                request_url,
+            })
+        }
     };
 
     match parsed {
