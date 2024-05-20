@@ -62,7 +62,7 @@
                 | tr -d '\n'                                  \
                 | ${xxd}/bin/xxd -r -p > $output
               '';
-            rust = pkgs.rust-bin.stable."1.70.0".default.override {
+            rust = pkgs.rust-bin.stable."1.78.0".default.override {
               extensions = [ "rust-src" "clippy" ];
             };
 
