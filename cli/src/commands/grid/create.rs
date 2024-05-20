@@ -462,16 +462,6 @@ where
     }
 }
 
-#[derive(Tabled)]
-struct BoxSummary {
-    #[tabled(rename = "Box type")]
-    box_type: String,
-    #[tabled(rename = "Value")]
-    value: String,
-    #[tabled(rename = "Tokens")]
-    token: String,
-}
-
 /// Build a transaction that creates a new grid of orders
 #[allow(clippy::too_many_arguments)]
 fn build_new_grid_data<T: LiquidityProvider>(
