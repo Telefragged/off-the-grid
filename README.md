@@ -123,7 +123,7 @@ comet | 16 Sell 34 Buy, Bid 67000 ERG/COMET Ask 65000 ERG/COMET, Profit 0 ERG (0
 
 Details for a specific grid order are shown using `off-the-grid grid details`:
 ```shell
-$ cargo run -- grid details -i comet
+$ off-the-grid grid details -i comet
 Sell 10200 COMET @ 50000 ERG/COMET
 Sell 10400 COMET @ 51000 ERG/COMET
 Sell 10600 COMET @ 52000 ERG/COMET
