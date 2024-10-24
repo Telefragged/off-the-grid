@@ -9,7 +9,7 @@ edition = "2021"
 ergo-lib = "0.23"
 serde = "1.0"
 serde_json = "1.0"
-tokio = { version = "1.37", features = ["full"] }
+tokio = { version = "1.41", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
 thiserror = "1.0"
 num-bigint = "0.4"
