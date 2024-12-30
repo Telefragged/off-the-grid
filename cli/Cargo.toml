@@ -23,7 +23,7 @@ itertools = "0.13"
 fraction = { version = "0.15", default-features = false }
 futures = "0.3"
 tabled = { version = "0.14", features = ["color", "std"] }
-colored = "2.1"
+colored = "2.2"
 
 [dev-dependencies]
 proptest = "1.5"
