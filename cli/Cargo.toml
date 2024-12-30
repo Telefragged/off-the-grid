@@ -26,4 +26,4 @@ tabled = { version = "0.14", features = ["color", "std"] }
 colored = "2.1"
 
 [dev-dependencies]
-proptest = "1.5"
+proptest = "1.6"
